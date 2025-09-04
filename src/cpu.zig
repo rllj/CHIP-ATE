@@ -27,8 +27,7 @@ const FONT = [80]u8{
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 };
 
-// TODO: Stop being a smartass about the types :(
-pub const CHIP_8 = struct {
+pub const CHIP8 = struct {
     memory: Memory,
     stack: Stack, // Cheat a little and have the stack outside of RAM
     registers: Registers,
@@ -37,7 +36,7 @@ pub const CHIP_8 = struct {
     sound: u8,
     display: *[32][64]u8,
 
-    pub fn init(display: *[32][64]u8, rom: []const u8) CHIP_8 {
+    pub fn init(display: *[32][64]u8, rom: []const u8) CHIP8 {
         comptime assert(@sizeOf(Memory) == 0x1000);
         var memory: Memory = .{ .sections = .{} };
 
@@ -53,7 +52,7 @@ pub const CHIP_8 = struct {
         };
     }
 
-    pub fn cycle(self: *CHIP_8) void {
+    pub fn cycle(self: *CHIP8) void {
         const pc = &self.registers.pc;
         const inst_upper: u16 = self.memory.contiguous[pc.*];
         const inst_lower: u16 = self.memory.contiguous[pc.* + 1];
@@ -62,7 +61,7 @@ pub const CHIP_8 = struct {
         self.execute(inst);
     }
 
-    pub fn execute(self: *CHIP_8, inst_bits: u16) void {
+    pub fn execute(self: *CHIP8, inst_bits: u16) void {
         const inst: Instruction = @bitCast(inst_bits);
 
         std.debug.print("inst: 0x{x}\n", .{inst_bits});
@@ -296,7 +295,7 @@ pub const CHIP_8 = struct {
 
 test "load immediate" {
     var display: [32][64]u8 = undefined;
-    var cpu = CHIP_8.init(&display, &.{
+    var cpu = CHIP8.init(&display, &.{
         0x60, 0xED,
         0x61, 0xBF,
         0x6F, 0x00,
@@ -315,7 +314,7 @@ test "load immediate" {
 
 test "load index" {
     var display: [32][64]u8 = undefined;
-    var cpu = CHIP_8.init(&display, &.{
+    var cpu = CHIP8.init(&display, &.{
         0xA1, 0x12,
         0xAF, 0xFF,
         0xA0, 0x00,
