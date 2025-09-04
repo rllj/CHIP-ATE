@@ -1,5 +1,8 @@
 const std = @import("std");
+
 const random = std.crypto.random;
+const readInt = std.mem.readInt;
+
 const assert = std.debug.assert;
 
 // Font taken directly from
@@ -34,12 +37,12 @@ pub const CHIP_8 = struct {
     display: *[32][64]u8,
 
     pub fn init(display: *[32][64]u8) CHIP_8 {
-        comptime assert(@sizeOf(Memory) == 4096);
-        var memory: Memory = .{};
+        comptime assert(@sizeOf(Memory) == 0x1000);
+        var memory: Memory = .{ .sections = .{} };
 
-        const ch8 = @embedFile("2-ibm-logo.ch8");
-        @memcpy(memory.ram[0..ch8.len], ch8);
-        const pc = 0x0000;
+        const ch8 = @embedFile("1-chip8-logo.ch8");
+        @memcpy(memory.sections.ram[0..ch8.len], ch8);
+        const pc = 0x0200;
         return .{
             .memory = memory,
             .stack = .{},
@@ -51,14 +54,18 @@ pub const CHIP_8 = struct {
     }
 
     pub fn cycle(self: *CHIP_8) void {
-        const inst_raw = self.memory.instructions()[self.registers.pc];
-        self.registers.pc += 1;
-        self.execute(inst_raw);
+        const pc = &self.registers.pc;
+        const inst_upper: u16 = self.memory.contiguous[pc.*];
+        const inst_lower: u16 = self.memory.contiguous[pc.* + 1];
+        const inst = inst_upper << 8 | inst_lower;
+        pc.* += 2;
+        self.execute(inst);
     }
 
-    pub fn execute(self: *CHIP_8, inst_raw: u16) void {
-        const inst: Instruction = @bitCast(@byteSwap(inst_raw));
-        const inst_bits = @byteSwap(inst_raw);
+    pub fn execute(self: *CHIP_8, inst_bits: u16) void {
+        const inst: Instruction = @bitCast(inst_bits);
+
+        std.debug.print("inst: 0x{x}\n", .{inst_bits});
 
         switch (inst_bits) {
             0x0000...0x0FFF => {
@@ -69,16 +76,15 @@ pub const CHIP_8 = struct {
                     },
                     0x00EE => self.registers.pc = self.stack.pop(), // Return
                     else => {
-                        std.debug.print("Invalid inst: 0x{x}\n", .{inst_bits});
-                        @panic("");
+                        std.debug.panic("Invalid inst: 0x{x}\n", .{inst_bits});
                     },
                 }
             },
-            0x1000...0x1FFF => {
+            0x1000...0x1FFF => { // Jump
                 const nnn = inst.nibbles.nnn.nnn;
-                const addr: u16 = ((nnn & 8) << 4) | (nnn >> 8);
-                self.registers.pc = addr;
-            }, // Jump
+                std.debug.print("Jump to 0x{x}\n", .{nnn});
+                self.registers.pc = nnn;
+            },
             0x2000...0x2FFF => { // Call
                 self.stack.push(self.registers.pc);
                 self.registers.pc = inst.nibbles.nnn.nnn;
@@ -87,36 +93,39 @@ pub const CHIP_8 = struct {
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
                 if (self.registers.v[x] == nn) {
-                    self.registers.pc += 1;
+                    self.registers.pc += 2;
                 }
             },
             0x4000...0x4FFF => { // Skip if VX != NN
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
                 if (self.registers.v[x] != nn) {
-                    self.registers.pc += 1;
+                    self.registers.pc += 2;
                 }
             },
             0x5000...0x5FFF => skip: { // Skip if VX == VY // TODO: Combine with 0x9XYN
-                const xyn = inst.nibbles.xyn;
-                if (xyn.n != 0) break :skip;
-                assert(inst_bits & 0xF == xyn.n);
-                if (self.registers.v[xyn.x] == self.registers.v[xyn.y]) {
-                    self.registers.pc += 1;
+                const x = inst.nibbles.xyn.x;
+                const y = inst.nibbles.xyn.y;
+                const n = inst.nibbles.xyn.n;
+                if (n != 0) break :skip;
+                assert(inst_bits & 0xF == n);
+                if (self.registers.v[x] == self.registers.v[y]) {
+                    self.registers.pc += 2;
                 }
             },
             0x9000...0x9FFF => skip: { // Skip if VX != VY
                 if (inst.nibbles.xyn.n != 0) break :skip;
-                const xyn = inst.nibbles.xyn;
-                if (self.registers.v[xyn.x] != self.registers.v[xyn.y]) {
-                    self.registers.pc += 1;
+                const x = inst.nibbles.xyn.x;
+                const y = inst.nibbles.xyn.y;
+                if (self.registers.v[x] != self.registers.v[y]) {
+                    self.registers.pc += 2;
                 }
             },
-            0x6000...0x6FFF => {
+            0x6000...0x6FFF => { // Set VX to NN
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
                 self.registers.v[x] = nn;
-            }, // Set VX to NN
+            },
             0x7000...0x7FFF => { // Add NN to VX
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
@@ -156,7 +165,6 @@ pub const CHIP_8 = struct {
                 }
             },
             0xA000...0xAFFF => {
-                std.debug.print("Wrote value {d} to index register\n", .{inst.nibbles.nnn.nnn});
                 self.registers.i = inst.nibbles.nnn.nnn;
             },
             0xB000...0xBFFF => self.registers.pc = inst.nibbles.nnn.nnn + self.registers.v[0], // TODO: Configurable behaviour
@@ -171,7 +179,6 @@ pub const CHIP_8 = struct {
                 const x = inst.nibbles.xyn.x;
                 const y = inst.nibbles.xyn.y;
                 const n = inst.nibbles.xyn.n;
-                std.debug.print("d: {d}, x: {d}, y: {d}, n: {d}, n actual: {d}\n", .{ @intFromEnum(inst.opcode), x, y, n, inst_bits & 0xF });
                 assert(inst_bits & 0xF == n);
 
                 const x_coord: u16 = self.registers.v[x] % 64;
@@ -180,28 +187,27 @@ pub const CHIP_8 = struct {
                 self.registers.v[0xF] = 0;
 
                 for (0..n) |byte| {
+                    const sprite = self.registers.i + byte;
                     for (0..8) |i| {
-                        self.display[(y_coord + byte) % 32][x_coord + i] = 255;
+                        const pixel = (sprite >> @truncate(7 - i)) & 1;
+                        const mask: u8 = if (pixel == 0) 0 else 255;
+                        self.display[(y_coord + byte) % 32][x_coord + i] ^= mask;
                     }
                 }
             },
-            else => std.debug.print("Invalid inst: 0x{x}\n", .{inst_bits}),
+            else => std.debug.panic("Invalid inst: 0x{x}\n", .{inst_bits}),
         }
     }
 
-    pub const Memory = extern struct {
-        reserved0: [0x0050]u8 = std.mem.zeroes([0x0050]u8),
-        font: [0x0050]u8 = FONT,
-        reserved1: [0x0160]u8 = undefined,
-        ram: [0x0E00]u8 = undefined,
-
-        pub inline fn contiguous(self: Memory) [0x1000]u8 {
-            return @bitCast(self);
-        }
-
-        pub inline fn instructions(self: Memory) [0x0700]u16 {
-            return @bitCast(self.ram);
-        }
+    pub const Memory = extern union {
+        sections: extern struct {
+            reserved0: [0x0050]u8 = std.mem.zeroes([0x0050]u8),
+            font: [0x0050]u8 = FONT,
+            reserved1: [0x0160]u8 = undefined,
+            ram: [0x0E00]u8 = undefined,
+        },
+        contiguous: [0x1000]u8,
+        instructions: [0x0800]u16,
     };
 
     pub const Stack = struct {
