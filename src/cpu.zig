@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 
 const random = std.crypto.random;
 const readInt = std.mem.readInt;
@@ -36,12 +37,11 @@ pub const CHIP_8 = struct {
     sound: u8,
     display: *[32][64]u8,
 
-    pub fn init(display: *[32][64]u8) CHIP_8 {
+    pub fn init(display: *[32][64]u8, rom: []const u8) CHIP_8 {
         comptime assert(@sizeOf(Memory) == 0x1000);
         var memory: Memory = .{ .sections = .{} };
 
-        const ch8 = @embedFile("1-chip8-logo.ch8");
-        @memcpy(memory.sections.ram[0..ch8.len], ch8);
+        @memcpy(memory.sections.ram[0..rom.len], rom);
         const pc = 0x0200;
         return .{
             .memory = memory,
@@ -187,11 +187,17 @@ pub const CHIP_8 = struct {
                 self.registers.v[0xF] = 0;
 
                 for (0..n) |byte| {
-                    const sprite = self.registers.i + byte;
+                    const sprite = self.memory.contiguous[self.registers.i + byte];
                     for (0..8) |i| {
                         const pixel = (sprite >> @truncate(7 - i)) & 1;
                         const mask: u8 = if (pixel == 0) 0 else 255;
-                        self.display[(y_coord + byte) % 32][x_coord + i] ^= mask;
+
+                        const dest_pixel = &self.display[(y_coord - byte) % 32][x_coord + i];
+
+                        self.registers.v[0xF] = dest_pixel.*;
+                        dest_pixel.* ^= mask;
+                        self.registers.v[0xF] ^= mask;
+                        self.registers.v[0xF] &= 1;
                     }
                 }
             },
@@ -287,3 +293,40 @@ pub const CHIP_8 = struct {
         };
     };
 };
+
+test "load immediate" {
+    var display: [32][64]u8 = undefined;
+    var cpu = CHIP_8.init(&display, &.{
+        0x60, 0xED,
+        0x61, 0xBF,
+        0x6F, 0x00,
+        0x60, 0xFF,
+    });
+
+    cpu.cycle();
+    cpu.cycle();
+    cpu.cycle();
+    cpu.cycle();
+
+    try t.expectEqual(0xFF, cpu.registers.v[0x0]);
+    try t.expectEqual(0xBF, cpu.registers.v[0x1]);
+    try t.expectEqual(0x00, cpu.registers.v[0xF]);
+}
+
+test "load index" {
+    var display: [32][64]u8 = undefined;
+    var cpu = CHIP_8.init(&display, &.{
+        0xA1, 0x12,
+        0xAF, 0xFF,
+        0xA0, 0x00,
+    });
+
+    cpu.cycle();
+    try t.expectEqual(0x112, cpu.registers.i);
+
+    cpu.cycle();
+    try t.expectEqual(0xFFF, cpu.registers.i);
+
+    cpu.cycle();
+    try t.expectEqual(0x000, cpu.registers.i);
+}

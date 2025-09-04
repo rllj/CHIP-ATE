@@ -113,7 +113,7 @@ pub fn main() !void {
     const pixels = try std.heap.page_allocator.create([32][64]u8);
     defer std.heap.page_allocator.free(pixels);
 
-    var cpu = CPU.init(pixels);
+    var cpu = CPU.init(pixels, @embedFile("2-ibm-logo.ch8"));
 
     while (!glfw.windowShouldClose(window)) {
         gl.ClearColor(1.0, 0.0, 1.0, 1.0);
