@@ -1,3 +1,4 @@
+const std = @import("std");
 const gl = @import("gl");
 
 pub const Framebuffer = struct {
@@ -11,8 +12,8 @@ pub const Framebuffer = struct {
         gl.BindTexture(gl.TEXTURE_2D, texture);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
 
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
         return .{
             .texture = texture,
@@ -31,6 +32,14 @@ pub const Framebuffer = struct {
     }
 
     pub fn draw(self: Framebuffer, pixels: []const u8) void {
+        //for (pixels, 0..) |pixel, i| {
+        //    const y = @divFloor(i, 64);
+        //    const x = i - y * 64;
+        //    std.debug.print("{d}", .{@intFromBool(pixel > 0)});
+        //    if (x == 63) std.debug.print("\n", .{});
+        //}
+        // std.debug.print("\n\n\n", .{});
+        std.Thread.sleep(10000000);
         self.bind();
         gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, self.width, self.height, 0, gl.RGB, gl.UNSIGNED_BYTE_3_3_2, pixels.ptr);
         self.unbind();

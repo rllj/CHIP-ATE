@@ -31,14 +31,14 @@ pub const CHIP_8 = struct {
     // Timers
     delay: u8,
     sound: u8,
-    display: []u8,
+    display: *[32][64]u8,
 
-    pub fn init(display: []u8) CHIP_8 {
-        comptime assert(@sizeOf(Memory) == 0x1000);
+    pub fn init(display: *[32][64]u8) CHIP_8 {
+        comptime assert(@sizeOf(Memory) == 4096);
         var memory: Memory = .{};
 
-        const ch8 = @embedFile("1-chip8-logo.ch8");
-        @memcpy(memory.ram1[0..ch8.len], ch8);
+        const ch8 = @embedFile("2-ibm-logo.ch8");
+        @memcpy(memory.ram[0..ch8.len], ch8);
         const pc = 0x0000;
         return .{
             .memory = memory,
@@ -51,23 +51,25 @@ pub const CHIP_8 = struct {
     }
 
     pub fn cycle(self: *CHIP_8) void {
-        const inst = self.memory.instructions()[self.registers.pc];
-
-        std.debug.print("pc: {d}\n", .{self.registers.pc});
-        std.debug.print("inst: 0x{x}\n", .{@byteSwap(@as(u16, @bitCast(inst)))});
+        const inst_raw = self.memory.instructions()[self.registers.pc];
         self.registers.pc += 1;
-        self.execute(inst);
+        self.execute(inst_raw);
     }
 
-    pub fn execute(self: *CHIP_8, inst: Instruction) void {
-        const inst_bits = @byteSwap(@as(u16, @bitCast(inst)));
+    pub fn execute(self: *CHIP_8, inst_raw: u16) void {
+        const inst: Instruction = @bitCast(@byteSwap(inst_raw));
+        const inst_bits = @byteSwap(inst_raw);
+
         switch (inst_bits) {
             0x0000...0x0FFF => {
                 switch (inst_bits) {
-                    0x00E0 => @memset(self.display, 0), // Clear screen
+                    0x00E0 => { // Clear screen
+                        self.display.* = std.mem.zeroes([32][64]u8);
+                        self.display[31][0] = 0b1100111;
+                    },
                     0x00EE => self.registers.pc = self.stack.pop(), // Return
                     else => {
-                        std.debug.print("Invalid inst: {x}\n", .{inst_bits});
+                        std.debug.print("Invalid inst: 0x{x}\n", .{inst_bits});
                         @panic("");
                     },
                 }
@@ -96,16 +98,17 @@ pub const CHIP_8 = struct {
                 }
             },
             0x5000...0x5FFF => skip: { // Skip if VX == VY // TODO: Combine with 0x9XYN
-                if (inst.nibbles.xyn.n != 0) break :skip;
                 const xyn = inst.nibbles.xyn;
+                if (xyn.n != 0) break :skip;
+                assert(inst_bits & 0xF == xyn.n);
                 if (self.registers.v[xyn.x] == self.registers.v[xyn.y]) {
                     self.registers.pc += 1;
                 }
             },
-            0x9000...0x9FFF => skip: { // Skip if VX == VY
+            0x9000...0x9FFF => skip: { // Skip if VX != VY
                 if (inst.nibbles.xyn.n != 0) break :skip;
                 const xyn = inst.nibbles.xyn;
-                if (self.registers.v[xyn.x] == self.registers.v[xyn.y]) {
+                if (self.registers.v[xyn.x] != self.registers.v[xyn.y]) {
                     self.registers.pc += 1;
                 }
             },
@@ -117,7 +120,8 @@ pub const CHIP_8 = struct {
             0x7000...0x7FFF => { // Add NN to VX
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
-                self.registers.v[x] += nn;
+                assert(inst_bits & 0xFF == nn);
+                self.registers.v[x] +%= nn;
             },
             0x8000...0x8FFF => al: {
                 if (inst.nibbles.xyn.n != 0) break :al;
@@ -151,7 +155,10 @@ pub const CHIP_8 = struct {
                     _ => unreachable,
                 }
             },
-            0xA000...0xAFFF => self.registers.i = inst.nibbles.nnn.nnn,
+            0xA000...0xAFFF => {
+                std.debug.print("Wrote value {d} to index register\n", .{inst.nibbles.nnn.nnn});
+                self.registers.i = inst.nibbles.nnn.nnn;
+            },
             0xB000...0xBFFF => self.registers.pc = inst.nibbles.nnn.nnn + self.registers.v[0], // TODO: Configurable behaviour
             0xC000...0xCFFF => {
                 const x = inst.nibbles.xnn.x;
@@ -164,17 +171,18 @@ pub const CHIP_8 = struct {
                 const x = inst.nibbles.xyn.x;
                 const y = inst.nibbles.xyn.y;
                 const n = inst.nibbles.xyn.n;
+                std.debug.print("d: {d}, x: {d}, y: {d}, n: {d}, n actual: {d}\n", .{ @intFromEnum(inst.opcode), x, y, n, inst_bits & 0xF });
+                assert(inst_bits & 0xF == n);
 
-                const x_coord = self.registers.v[x] % 64;
-                const y_coord = self.registers.v[y] % 32;
-                const coord_idx = x_coord + 64 * y_coord;
+                const x_coord: u16 = self.registers.v[x] % 64;
+                const y_coord: u16 = 31 - self.registers.v[y] % 32;
 
                 self.registers.v[0xF] = 0;
 
-                for (0..n) |row| {
-                    _ = row;
-                    const sprite_loc = self.registers.i + n;
-                    self.display[coord_idx] ^= self.memory.contiguous()[sprite_loc];
+                for (0..n) |byte| {
+                    for (0..8) |i| {
+                        self.display[(y_coord + byte) % 32][x_coord + i] = 255;
+                    }
                 }
             },
             else => std.debug.print("Invalid inst: 0x{x}\n", .{inst_bits}),
@@ -182,16 +190,17 @@ pub const CHIP_8 = struct {
     }
 
     pub const Memory = extern struct {
-        ram0: [0x0050]u8 = std.mem.zeroes([0x0050]u8),
+        reserved0: [0x0050]u8 = std.mem.zeroes([0x0050]u8),
         font: [0x0050]u8 = FONT,
-        ram1: [0x0F60]u8 = undefined,
+        reserved1: [0x0160]u8 = undefined,
+        ram: [0x0E00]u8 = undefined,
 
         pub inline fn contiguous(self: Memory) [0x1000]u8 {
             return @bitCast(self);
         }
 
-        pub inline fn instructions(self: Memory) [0x07B0]Instruction {
-            return @bitCast(self.ram1);
+        pub inline fn instructions(self: Memory) [0x0700]u16 {
+            return @bitCast(self.ram);
         }
     };
 
@@ -223,30 +232,30 @@ pub const CHIP_8 = struct {
     };
 
     pub const Instruction = packed struct(u16) {
-        opcode: Opcode,
         nibbles: packed union {
             nnn: NNN,
             xnn: XNN,
             xyn: XYN,
             xyo: XYO,
         },
+        opcode: Opcode,
 
-        const NNN = packed struct {
+        const NNN = packed struct(u12) {
             nnn: u12,
         };
-        const XNN = packed struct {
-            x: u4,
+        const XNN = packed struct(u12) {
             nn: u8,
-        };
-        const XYN = packed struct {
             x: u4,
-            y: u4,
+        };
+        const XYN = packed struct(u12) {
             n: u4,
-        };
-        const XYO = packed struct {
-            x: u4,
             y: u4,
+            x: u4,
+        };
+        const XYO = packed struct(u12) {
             al: Opcode.AL,
+            y: u4,
+            x: u4,
         };
 
         const Opcode = enum(u4) {

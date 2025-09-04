@@ -7,8 +7,8 @@ const Framebuffer = @import("framebuffer.zig").Framebuffer;
 
 const CPU = @import("cpu.zig").CHIP_8;
 
-const WINDOW_WIDTH = 640;
-const WINDOW_HEIGHT = 320;
+const WINDOW_WIDTH = 64;
+const WINDOW_HEIGHT = 32;
 
 var procs: gl.ProcTable = undefined;
 
@@ -87,8 +87,8 @@ pub fn main() !void {
     glfw.windowHint(.opengl_profile, .opengl_core_profile);
 
     const window = try glfw.createWindow(
-        WINDOW_WIDTH,
-        WINDOW_HEIGHT,
+        WINDOW_WIDTH * 10,
+        WINDOW_HEIGHT * 10,
         "Render",
         null,
     );
@@ -110,8 +110,7 @@ pub fn main() !void {
 
     const framebuffer = try Framebuffer.init(WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    const pixels = try std.heap.page_allocator.alloc(u8, WINDOW_WIDTH * WINDOW_HEIGHT);
-    @memset(pixels, 0b11100001);
+    const pixels = try std.heap.page_allocator.create([32][64]u8);
     defer std.heap.page_allocator.free(pixels);
 
     var cpu = CPU.init(pixels);
@@ -121,7 +120,7 @@ pub fn main() !void {
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         cpu.cycle();
-        framebuffer.draw(pixels);
+        framebuffer.draw(&@as([64 * 32]u8, @bitCast(pixels.*)));
         framebuffer.bind();
         defer framebuffer.unbind();
 
