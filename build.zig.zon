@@ -1,0 +1,21 @@
+.{
+    .name = .render,
+    .version = "0.0.0",
+    .fingerprint = 0x945c996a045ce44d,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .zglfw = .{
+            .url = "git+https://github.com/zig-gamedev/zglfw.git#feeeff9386dd44ba2c18488113023865c41b80a4",
+            .hash = "zglfw-0.10.0-dev-zgVDNLyhIQCZR_rbIf7hnCKuifzcmPOLOQhd_hrqq8cl",
+        },
+        .zigglgen = .{
+            .url = "git+https://github.com/castholm/zigglgen.git#048d4a859bac9eb17743ede5dcab8b9dfa06ab6e",
+            .hash = "zigglgen-0.4.0-bmyqLYHOLgBMnx2o3NRCxM0pqTZ2k72nUBkL5xCm5sU-",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
