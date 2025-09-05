@@ -34,6 +34,10 @@ pub const CHIP8 = struct {
     // Timers
     delay: u8,
     sound: u8,
+    input: extern union {
+        key: [16]bool,
+        key_bits: u8,
+    },
     display: *[32][64]u8,
 
     pub fn init(display: *[32][64]u8, rom: []const u8) CHIP8 {
@@ -48,6 +52,7 @@ pub const CHIP8 = struct {
             .registers = .{ .pc = pc },
             .delay = 0,
             .sound = 0,
+            .input = .{ .key_bits = 0 },
             .display = display,
         };
     }
@@ -58,6 +63,8 @@ pub const CHIP8 = struct {
         const inst_lower: u16 = self.memory.contiguous[pc.* + 1];
         const inst = inst_upper << 8 | inst_lower;
         pc.* += 2;
+        self.delay -|= 1; // TODO: proper timer countdown
+        self.sound -|= 1; // TODO: proper timer countdown
         self.execute(inst);
     }
 
@@ -112,14 +119,6 @@ pub const CHIP8 = struct {
                     self.registers.pc += 2;
                 }
             },
-            0x9000...0x9FFF => skip: { // Skip if VX != VY
-                if (inst.nibbles.xyn.n != 0) break :skip;
-                const x = inst.nibbles.xyn.x;
-                const y = inst.nibbles.xyn.y;
-                if (self.registers.v[x] != self.registers.v[y]) {
-                    self.registers.pc += 2;
-                }
-            },
             0x6000...0x6FFF => { // Set VX to NN
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
@@ -163,18 +162,26 @@ pub const CHIP8 = struct {
                     _ => unreachable,
                 }
             },
-            0xA000...0xAFFF => {
+            0x9000...0x9FFF => skip: { // Skip if VX != VY
+                if (inst.nibbles.xyn.n != 0) break :skip;
+                const x = inst.nibbles.xyn.x;
+                const y = inst.nibbles.xyn.y;
+                if (self.registers.v[x] != self.registers.v[y]) {
+                    self.registers.pc += 2;
+                }
+            },
+            0xA000...0xAFFF => { // Set index register to NNN
                 self.registers.i = inst.nibbles.nnn.nnn;
             },
             0xB000...0xBFFF => self.registers.pc = inst.nibbles.nnn.nnn + self.registers.v[0], // TODO: Configurable behaviour
-            0xC000...0xCFFF => {
+            0xC000...0xCFFF => { // Random number and mask
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
                 var rand = random.int(u8);
                 rand &= nn;
                 self.registers.v[x] = rand;
             },
-            0xD000...0xDFFF => {
+            0xD000...0xDFFF => { // Draw
                 const x = inst.nibbles.xyn.x;
                 const y = inst.nibbles.xyn.y;
                 const n = inst.nibbles.xyn.n;
@@ -200,19 +207,82 @@ pub const CHIP8 = struct {
                     }
                 }
             },
-            else => std.debug.panic("Invalid inst: 0x{x}\n", .{inst_bits}),
+            0xE000...0xEFFF => keys: {
+                const skip_if_pressed = switch (inst.nibbles.xnn.nn) {
+                    0x9E => true,
+                    0xA1 => false,
+                    else => break :keys,
+                };
+                const x = inst.nibbles.xnn.x;
+                if (self.input.key[x] == skip_if_pressed) {
+                    self.registers.pc += 2;
+                }
+            },
+            0xF000...0xFFFF => {
+                const x = inst.nibbles.xnn.x;
+                switch (inst.nibbles.xnn.nn) {
+                    // Timers
+                    0x07 => self.registers.v[x] = self.delay,
+                    0x15 => self.delay = self.registers.v[x],
+                    0x18 => self.sound = self.registers.v[x],
+
+                    0x1E => {
+                        self.registers.i += self.registers.v[x];
+                        self.registers.v[0xF] = @intFromBool(self.registers.i > 0x0FFF);
+                        self.registers.i &= 0x0FFF;
+                    },
+                    0x0A => {
+                        if (self.input.key_bits == 0) {
+                            self.registers.pc -= 2;
+                        } else {
+                            const key_idx = @ctz(self.input.key_bits);
+                            self.registers.v[x] = key_idx;
+                        }
+                    },
+                    0x29 => {
+                        const reg_nibble = self.registers.v[x] & 0xF;
+                        const offset: u16 = @truncate(reg_nibble * (FONT.len / 16));
+                        self.registers.i = Memory.font_start + offset;
+                    },
+                    0x33 => {
+                        const hex = self.registers.v[x];
+
+                        const ones = hex % 10;
+                        const tens = (hex % 100 - ones) / 10;
+                        const hundreds = (hex - tens - ones) / 100;
+
+                        self.memory.contiguous[self.registers.i + 0] = hundreds;
+                        self.memory.contiguous[self.registers.i + 1] = tens;
+                        self.memory.contiguous[self.registers.i + 2] = ones;
+                    },
+
+                    0x55 => { // memcpy? // TODO: Configure incrementing i
+                        for (0..x + 1) |reg| {
+                            self.memory.contiguous[self.registers.i + reg] = self.registers.v[reg];
+                        }
+                    },
+                    0x65 => { // memcpy?
+                        for (0..x + 1) |reg| {
+                            self.registers.v[reg] = self.memory.contiguous[self.registers.i + reg];
+                        }
+                    },
+                    else => {},
+                }
+            },
         }
     }
 
     pub const Memory = extern union {
         sections: extern struct {
-            reserved0: [0x0050]u8 = std.mem.zeroes([0x0050]u8),
+            reserved0: [font_start]u8 = std.mem.zeroes([0x0050]u8),
             font: [0x0050]u8 = FONT,
             reserved1: [0x0160]u8 = undefined,
             ram: [0x0E00]u8 = undefined,
         },
         contiguous: [0x1000]u8,
         instructions: [0x0800]u16,
+
+        pub const font_start = 0x0050;
     };
 
     pub const Stack = struct {
@@ -328,4 +398,53 @@ test "load index" {
 
     cpu.cycle();
     try t.expectEqual(0x000, cpu.registers.i);
+}
+
+test "font char offset" {
+    var display: [32][64]u8 = undefined;
+    var cpu = CHIP8.init(&display, &.{
+        0x60, 0x00,
+        0xF0, 0x29,
+
+        0x61, 0x01,
+        0xF1, 0x29,
+
+        0x62, 0x01,
+        0xF2, 0x29,
+
+        0x63, 0x0F,
+        0xF3, 0x29,
+    });
+
+    cpu.cycle();
+    cpu.cycle();
+    try t.expectEqual(0x50, cpu.registers.i);
+
+    cpu.cycle();
+    cpu.cycle();
+    try t.expectEqual(0x55, cpu.registers.i);
+
+    cpu.cycle();
+    cpu.cycle();
+    try t.expectEqual(0x55, cpu.registers.i);
+
+    cpu.cycle();
+    cpu.cycle();
+    try t.expectEqual(0x9B, cpu.registers.i);
+}
+
+test "decimal conversion" {
+    var display: [32][64]u8 = undefined;
+    var cpu = CHIP8.init(&display, &.{
+        0xAF, 0x00,
+        0x60, 0x80,
+        0xF0, 0x33,
+    });
+
+    cpu.cycle();
+    cpu.cycle();
+    cpu.cycle();
+    try t.expectEqual(1, cpu.memory.contiguous[cpu.registers.i + 0]);
+    try t.expectEqual(2, cpu.memory.contiguous[cpu.registers.i + 1]);
+    try t.expectEqual(8, cpu.memory.contiguous[cpu.registers.i + 2]);
 }

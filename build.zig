@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
         .name = "render",
         .root_module = render_mod,
     });
+    exe.bundle_ubsan_rt = true;
 
     const zglfw = b.dependency("zglfw", .{});
     exe.root_module.addImport("zglfw", zglfw.module("root"));

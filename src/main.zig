@@ -5,7 +5,7 @@ const gl = @import("gl");
 const Shader = @import("shader.zig").Shader;
 const Framebuffer = @import("framebuffer.zig").Framebuffer;
 
-const CPU = @import("cpu.zig").CHIP_8;
+const CPU = @import("cpu.zig").CHIP8;
 
 const WINDOW_WIDTH = 64;
 const WINDOW_HEIGHT = 32;
@@ -113,7 +113,7 @@ pub fn main() !void {
     const pixels = try std.heap.page_allocator.create([32][64]u8);
     defer std.heap.page_allocator.free(pixels);
 
-    var cpu = CPU.init(pixels, @embedFile("2-ibm-logo.ch8"));
+    var cpu = CPU.init(pixels, @embedFile("Airplane.ch8"));
 
     while (!glfw.windowShouldClose(window)) {
         gl.ClearColor(1.0, 0.0, 1.0, 1.0);

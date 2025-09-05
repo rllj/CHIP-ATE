@@ -44,7 +44,6 @@ pub const Framebuffer = struct {
         //    if (x == 63) std.debug.print("\n", .{});
         //}
         //std.debug.print("\n\n\n", .{});
-        std.Thread.sleep(10000000);
         self.bind();
         gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, self.width, self.height, 0, gl.RGB, gl.UNSIGNED_BYTE_3_3_2, pixels.ptr);
         self.unbind();
