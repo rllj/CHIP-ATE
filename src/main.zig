@@ -114,7 +114,7 @@ pub fn main() !void {
     defer std.heap.page_allocator.free(pixels);
     @memset(@as(*[32 * 64]u8, @ptrCast(pixels)), 0);
 
-    var cpu = CPU.init(pixels, @embedFile("roms/4-flags.ch8"));
+    var cpu = CPU.init(pixels, @embedFile("roms/5-quirks.ch8"));
 
     glfw.setWindowUserPointer(window, &cpu);
     _ = glfw.setKeyCallback(window, CPU.Input.on_key_event);

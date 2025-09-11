@@ -163,35 +163,33 @@ pub const CHIP8 = struct {
                 const al = inst.nibbles.xyo.al;
                 const vx = &self.registers.v[x];
                 const vy = &self.registers.v[y];
-                const flags = &self.registers.flags;
+                const vf = &self.registers.v[0xF];
 
                 switch (al) {
-                    .assign => vx.* = vy.*,
-                    .@"or" => vx.* |= vy.*,
-                    .@"and" => vx.* &= vy.*,
-                    .xor => vx.* ^= vy.*,
-                    .add => {
-                        const old_x = vx.*;
-                        vx.* +%= vy.*;
-                        if (vx.* < old_x) flags.carry = 1 else flags.carry = 0;
+                    0x0 => vx.* = vy.*,
+                    0x1 => vx.* |= vy.*,
+                    0x2 => vx.* &= vy.*,
+                    0x3 => vx.* ^= vy.*,
+                    0x4 => {
+                        vx.*, vf.* = @addWithOverflow(vx.*, vy.*);
                     },
-                    .subxy => {
-                        vx.* -%= vy.*;
-                        if (vy.* > vx.*) flags.carry = 0 else flags.carry = 1;
+                    0x5 => {
+                        vx.*, vf.* = @subWithOverflow(vx.*, vy.*);
+                        vf.* ^= 1;
                     },
-                    .subyx => {
-                        vx.* = vy.* -% vx.*;
-                        if (vx.* > vy.*) flags.carry = 0 else flags.carry = 1;
+                    0x7 => {
+                        vx.*, vf.* = @subWithOverflow(vy.*, vx.*);
+                        vf.* ^= 1;
                     },
-                    .shr => { // TODO: Configurable behaviour
-                        flags.carry = @truncate(vx.*);
-                        vx.* >>= 1;
+                    0x6 => { // TODO: Configurable behaviour
+                        const overflow = vy.* & 1;
+                        vx.* = vy.* >> 1;
+                        vf.* = overflow;
                     },
-                    .shl => { // TODO: Configurable behaviour
-                        flags.carry = @truncate(vx.* >> 7);
-                        vx.* <<= 1;
+                    0xE => { // TODO: Configurable behaviour
+                        vx.*, vf.* = @shlWithOverflow(vy.*, 1);
                     },
-                    _ => unreachable,
+                    else => unreachable,
                 }
             },
             0x9000...0x9FFF => skip: { // Skip if VX != VY
@@ -343,12 +341,6 @@ pub const CHIP8 = struct {
         pc: u16 = 0x0100,
         i: u16 = 0,
         v: [16]u8 = @bitCast(@as(u128, 0)),
-        flags: Flags = @bitCast(@as(u8, 0)),
-
-        const Flags = packed struct(u8) {
-            carry: u1,
-            _padding: u7,
-        };
     };
 
     pub const Instruction = packed struct(u16) {
@@ -373,7 +365,7 @@ pub const CHIP8 = struct {
             x: u4,
         };
         const XYO = packed struct(u12) {
-            al: Opcode.AL,
+            al: u4,
             y: u4,
             x: u4,
         };
