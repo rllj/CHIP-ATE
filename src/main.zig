@@ -112,12 +112,18 @@ pub fn main() !void {
 
     const pixels = try std.heap.page_allocator.create([32][64]u8);
     defer std.heap.page_allocator.free(pixels);
+    @memset(@as(*[32 * 64]u8, @ptrCast(pixels)), 0);
 
-    var cpu = CPU.init(pixels, @embedFile("Airplane.ch8"));
+    var cpu = CPU.init(pixels, @embedFile("roms/4-flags.ch8"));
+
+    glfw.setWindowUserPointer(window, &cpu);
+    _ = glfw.setKeyCallback(window, CPU.Input.on_key_event);
 
     while (!glfw.windowShouldClose(window)) {
         gl.ClearColor(1.0, 0.0, 1.0, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        std.Thread.sleep(1_000_000_000 / 960);
 
         cpu.cycle();
         framebuffer.draw(&@as([64 * 32]u8, @bitCast(pixels.*)));

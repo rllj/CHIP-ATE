@@ -1,10 +1,13 @@
 const std = @import("std");
+const glfw = @import("zglfw");
 const t = std.testing;
 
 const random = std.crypto.random;
 const readInt = std.mem.readInt;
 
 const assert = std.debug.assert;
+
+const log = std.log.scoped(.cpu);
 
 // Font taken directly from
 // https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
@@ -32,17 +35,17 @@ pub const CHIP8 = struct {
     stack: Stack, // Cheat a little and have the stack outside of RAM
     registers: Registers,
     // Timers
-    delay: u8,
-    sound: u8,
-    input: extern union {
-        key: [16]bool,
-        key_bits: u8,
-    },
+    delay: Countdown,
+    sound: Countdown,
+    input: Input,
     display: *[32][64]u8,
+    timer: std.time.Timer,
 
     pub fn init(display: *[32][64]u8, rom: []const u8) CHIP8 {
         comptime assert(@sizeOf(Memory) == 0x1000);
         var memory: Memory = .{ .sections = .{} };
+
+        const timer = std.time.Timer.start() catch unreachable;
 
         @memcpy(memory.sections.ram[0..rom.len], rom);
         const pc = 0x0200;
@@ -50,10 +53,32 @@ pub const CHIP8 = struct {
             .memory = memory,
             .stack = .{},
             .registers = .{ .pc = pc },
-            .delay = 0,
-            .sound = 0,
-            .input = .{ .key_bits = 0 },
+            .delay = Countdown.from_u8(0),
+            .sound = Countdown.from_u8(0),
+            .input = .{ // TODO: Config
+                .mappings = .{
+                    // zig fmt: off
+                .@"1" = glfw.Key.one,
+                .@"2" = glfw.Key.two,
+                .@"3" = glfw.Key.three,
+                .C    = glfw.Key.four,
+                .@"4" = glfw.Key.q,
+                .@"5" = glfw.Key.w,
+                .@"6" = glfw.Key.e,
+                .D    = glfw.Key.r,
+                .@"7" = glfw.Key.a,
+                .@"8" = glfw.Key.s,
+                .@"9" = glfw.Key.d,
+                .E    = glfw.Key.f,
+                .A    = glfw.Key.z,
+                .@"0" = glfw.Key.x,
+                .B    = glfw.Key.c,
+                .F    = glfw.Key.v,
+                // zig fmt: on
+                },
+            },
             .display = display,
+            .timer = timer,
         };
     }
 
@@ -63,32 +88,34 @@ pub const CHIP8 = struct {
         const inst_lower: u16 = self.memory.contiguous[pc.* + 1];
         const inst = inst_upper << 8 | inst_lower;
         pc.* += 2;
-        self.delay -|= 1; // TODO: proper timer countdown
-        self.sound -|= 1; // TODO: proper timer countdown
+
+        const time = self.timer.lap() * 60;
+        // Decremented 60 times per second
+        self.delay.ns -|= time;
+        self.sound.ns -|= time;
+        log.debug("delay: {d}", .{self.delay.to_seconds()});
         self.execute(inst);
     }
 
     pub fn execute(self: *CHIP8, inst_bits: u16) void {
         const inst: Instruction = @bitCast(inst_bits);
 
-        std.debug.print("inst: 0x{x}\n", .{inst_bits});
+        log.debug("inst: 0x{x}", .{inst_bits});
 
         switch (inst_bits) {
             0x0000...0x0FFF => {
                 switch (inst_bits) {
                     0x00E0 => { // Clear screen
-                        self.display.* = std.mem.zeroes([32][64]u8);
-                        self.display[31][0] = 0b1100111;
+                        @memset(@as(*[32 * 64]u8, @ptrCast(self.display)), 0);
                     },
                     0x00EE => self.registers.pc = self.stack.pop(), // Return
                     else => {
-                        std.debug.panic("Invalid inst: 0x{x}\n", .{inst_bits});
+                        log.debug("Invalid inst: 0x{x}", .{inst_bits});
                     },
                 }
             },
             0x1000...0x1FFF => { // Jump
                 const nnn = inst.nibbles.nnn.nnn;
-                std.debug.print("Jump to 0x{x}\n", .{nnn});
                 self.registers.pc = nnn;
             },
             0x2000...0x2FFF => { // Call
@@ -130,9 +157,7 @@ pub const CHIP8 = struct {
                 assert(inst_bits & 0xFF == nn);
                 self.registers.v[x] +%= nn;
             },
-            0x8000...0x8FFF => al: {
-                if (inst.nibbles.xyn.n != 0) break :al;
-
+            0x8000...0x8FFF => {
                 const x = inst.nibbles.xyo.x;
                 const y = inst.nibbles.xyo.y;
                 const al = inst.nibbles.xyo.al;
@@ -146,11 +171,18 @@ pub const CHIP8 = struct {
                     .@"and" => vx.* &= vy.*,
                     .xor => vx.* ^= vy.*,
                     .add => {
+                        const old_x = vx.*;
                         vx.* +%= vy.*;
-                        if (vy.* > vx.*) flags.carry = 1 else flags.carry = 0;
+                        if (vx.* < old_x) flags.carry = 1 else flags.carry = 0;
                     },
-                    .subxy => vx.* = vx.* - vy.*,
-                    .subyx => vx.* = vy.* - vx.*,
+                    .subxy => {
+                        vx.* -%= vy.*;
+                        if (vy.* > vx.*) flags.carry = 0 else flags.carry = 1;
+                    },
+                    .subyx => {
+                        vx.* = vy.* -% vx.*;
+                        if (vx.* > vy.*) flags.carry = 0 else flags.carry = 1;
+                    },
                     .shr => { // TODO: Configurable behaviour
                         flags.carry = @truncate(vx.*);
                         vx.* >>= 1;
@@ -187,8 +219,8 @@ pub const CHIP8 = struct {
                 const n = inst.nibbles.xyn.n;
                 assert(inst_bits & 0xF == n);
 
-                const x_coord: u16 = self.registers.v[x] % 64;
-                const y_coord: u16 = 31 - self.registers.v[y] % 32;
+                const start_x: u16 = self.registers.v[x] % 64;
+                const start_y: u16 = 31 - self.registers.v[y] % 32;
 
                 self.registers.v[0xF] = 0;
 
@@ -198,12 +230,17 @@ pub const CHIP8 = struct {
                         const pixel = (sprite >> @truncate(7 - i)) & 1;
                         const mask: u8 = if (pixel == 0) 0 else 255;
 
-                        const dest_pixel = &self.display[(y_coord - byte) % 32][x_coord + i];
+                        const x_coord = start_x + i;
+                        const y_coord = start_y - byte;
 
-                        self.registers.v[0xF] = dest_pixel.*;
-                        dest_pixel.* ^= mask;
-                        self.registers.v[0xF] ^= mask;
-                        self.registers.v[0xF] &= 1;
+                        if (x_coord < 64) {
+                            const dest_pixel = &self.display[y_coord][x_coord];
+
+                            self.registers.v[0xF] = dest_pixel.*;
+                            dest_pixel.* ^= mask;
+                            self.registers.v[0xF] ^= mask;
+                            self.registers.v[0xF] &= 1;
+                        }
                     }
                 }
             },
@@ -214,7 +251,7 @@ pub const CHIP8 = struct {
                     else => break :keys,
                 };
                 const x = inst.nibbles.xnn.x;
-                if (self.input.key[x] == skip_if_pressed) {
+                if (self.input.keys[x] == skip_if_pressed) {
                     self.registers.pc += 2;
                 }
             },
@@ -222,9 +259,9 @@ pub const CHIP8 = struct {
                 const x = inst.nibbles.xnn.x;
                 switch (inst.nibbles.xnn.nn) {
                     // Timers
-                    0x07 => self.registers.v[x] = self.delay,
-                    0x15 => self.delay = self.registers.v[x],
-                    0x18 => self.sound = self.registers.v[x],
+                    0x07 => self.registers.v[x] = self.delay.to_seconds(),
+                    0x15 => self.delay = Countdown.from_u8(self.registers.v[x]),
+                    0x18 => self.sound = Countdown.from_u8(self.registers.v[x]),
 
                     0x1E => {
                         self.registers.i += self.registers.v[x];
@@ -232,12 +269,14 @@ pub const CHIP8 = struct {
                         self.registers.i &= 0x0FFF;
                     },
                     0x0A => {
-                        if (self.input.key_bits == 0) {
-                            self.registers.pc -= 2;
-                        } else {
-                            const key_idx = @ctz(self.input.key_bits);
-                            self.registers.v[x] = key_idx;
-                        }
+                        @panic("Not implemented");
+                        // TODO: implement correctly
+                        // if (self.input.key_bits == 0) {
+                        //     self.registers.pc -= 2;
+                        // } else {
+                        //     const key_idx = @ctz(self.input.key_bits);
+                        //     self.registers.v[x] = key_idx;
+                        // }
                     },
                     0x29 => {
                         const reg_nibble = self.registers.v[x] & 0xF;
@@ -360,6 +399,58 @@ pub const CHIP8 = struct {
             };
             // zig fmt: on
         };
+    };
+
+    pub const Input = struct {
+        keys: [16]bool = .{false} ** 16,
+        mappings: packed struct {
+            @"0": glfw.Key,
+            @"1": glfw.Key,
+            @"2": glfw.Key,
+            @"3": glfw.Key,
+            @"4": glfw.Key,
+            @"5": glfw.Key,
+            @"6": glfw.Key,
+            @"7": glfw.Key,
+            @"8": glfw.Key,
+            @"9": glfw.Key,
+            A: glfw.Key,
+            B: glfw.Key,
+            C: glfw.Key,
+            D: glfw.Key,
+            E: glfw.Key,
+            F: glfw.Key,
+        },
+
+        // TODO: refactor
+        pub fn on_key_event(glfw_window: *glfw.Window, key: glfw.Key, _: c_int, action: glfw.Action, _: glfw.Mods) callconv(.c) void {
+            const self = glfw.getWindowUserPointer(glfw_window, CHIP8) orelse unreachable;
+            const mappings_array: [16]glfw.Key = @bitCast(self.input.mappings);
+
+            for (mappings_array, 0..) |mapped_key, i| {
+                if (key == mapped_key) {
+                    self.input.keys[i] = action != .release;
+                    log.debug("Keypress: {s}, set key 0x{x} to {}", .{
+                        @tagName(key),
+                        i,
+                        action != .release,
+                    });
+                }
+            }
+        }
+    };
+
+    pub const Countdown = struct {
+        ns: u64,
+
+        pub fn to_seconds(self: Countdown) u8 {
+            return @truncate(self.ns / 1_000_000_000);
+        }
+
+        pub fn from_u8(from: u8) Countdown {
+            const extended_from: u64 = from;
+            return .{ .ns = extended_from * 1_000_000_000 };
+        }
     };
 };
 
