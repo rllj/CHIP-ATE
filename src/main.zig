@@ -97,6 +97,8 @@ pub fn main() !void {
     glfw.makeContextCurrent(window);
     defer glfw.makeContextCurrent(null);
 
+    glfw.swapInterval(0);
+
     if (!procs.init(getProcAddress)) return error.InitFailed;
 
     gl.makeProcTableCurrent(&procs);
@@ -114,7 +116,7 @@ pub fn main() !void {
     defer std.heap.page_allocator.free(pixels);
     @memset(@as(*[32 * 64]u8, @ptrCast(pixels)), 0);
 
-    var cpu = CPU.init(pixels, @embedFile("roms/5-quirks.ch8"));
+    var cpu = CPU.init(pixels, @embedFile("roms/6-keypad.ch8"));
 
     glfw.setWindowUserPointer(window, &cpu);
     _ = glfw.setKeyCallback(window, CPU.Input.on_key_event);
@@ -122,8 +124,6 @@ pub fn main() !void {
     while (!glfw.windowShouldClose(window)) {
         gl.ClearColor(1.0, 0.0, 1.0, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        std.Thread.sleep(1_000_000_000 / 960);
 
         cpu.cycle();
         framebuffer.draw(&@as([64 * 32]u8, @bitCast(pixels.*)));
@@ -143,7 +143,7 @@ pub fn main() !void {
         gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
         shader.free();
 
-        glfw.swapBuffers(window);
         glfw.pollEvents();
+        glfw.swapBuffers(window);
     }
 }

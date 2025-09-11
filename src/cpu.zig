@@ -93,14 +93,13 @@ pub const CHIP8 = struct {
         // Decremented 60 times per second
         self.delay.ns -|= time;
         self.sound.ns -|= time;
-        //log.debug("delay: {d}", .{self.delay.to_seconds()});
         self.execute(inst);
     }
 
     pub fn execute(self: *CHIP8, inst_bits: u16) void {
         const inst: Instruction = @bitCast(inst_bits);
 
-        //log.debug("inst: 0x{x}", .{inst_bits});
+        log.debug("inst: 0x{x}", .{inst_bits});
 
         switch (inst_bits) {
             0x0000...0x0FFF => {
@@ -136,7 +135,7 @@ pub const CHIP8 = struct {
                     self.registers.pc += 2;
                 }
             },
-            0x5000...0x5FFF => skip: { // Skip if VX == VY // TODO: Combine with 0x9XYN
+            0x5000...0x5FFF => skip: { // Skip if VX == VY
                 const x = inst.nibbles.xyn.x;
                 const y = inst.nibbles.xyn.y;
                 const n = inst.nibbles.xyn.n;
@@ -165,6 +164,8 @@ pub const CHIP8 = struct {
                 const vy = &self.registers.v[y];
                 const vf = &self.registers.v[0xF];
 
+                vf.* = 0;
+
                 switch (al) {
                     0x0 => vx.* = vy.*,
                     0x1 => vx.* |= vy.*,
@@ -181,15 +182,15 @@ pub const CHIP8 = struct {
                         vx.*, vf.* = @subWithOverflow(vy.*, vx.*);
                         vf.* ^= 1;
                     },
-                    0x6 => { // TODO: Configurable behaviour
+                    0x6 => {
                         const overflow = vy.* & 1;
                         vx.* = vy.* >> 1;
                         vf.* = overflow;
                     },
-                    0xE => { // TODO: Configurable behaviour
+                    0xE => {
                         vx.*, vf.* = @shlWithOverflow(vy.*, 1);
                     },
-                    else => unreachable,
+                    else => invalid_inst(inst_bits),
                 }
             },
             0x9000...0x9FFF => skip: { // Skip if VX != VY
@@ -203,7 +204,7 @@ pub const CHIP8 = struct {
             0xA000...0xAFFF => { // Set index register to NNN
                 self.registers.i = inst.nibbles.nnn.nnn;
             },
-            0xB000...0xBFFF => self.registers.pc = inst.nibbles.nnn.nnn + self.registers.v[0], // TODO: Configurable behaviour
+            0xB000...0xBFFF => self.registers.pc = inst.nibbles.nnn.nnn + self.registers.v[0],
             0xC000...0xCFFF => { // Random number and mask
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
@@ -218,27 +219,27 @@ pub const CHIP8 = struct {
                 assert(inst_bits & 0xF == n);
 
                 const start_x: u16 = self.registers.v[x] % 64;
-                const start_y: u16 = 31 - self.registers.v[y] % 32;
+                const start_y: u16 = self.registers.v[y] % 32;
 
                 self.registers.v[0xF] = 0;
 
                 for (0..n) |byte| {
+                    const y_coord = start_y + byte;
+                    if (y_coord > 31) break;
                     const sprite = self.memory.contiguous[self.registers.i + byte];
                     for (0..8) |i| {
-                        const pixel = (sprite >> @truncate(7 - i)) & 1;
-                        const mask: u8 = if (pixel == 0) 0 else 255;
-
                         const x_coord = start_x + i;
-                        const y_coord = start_y - byte;
+                        if (x_coord > 63) break;
 
-                        if (x_coord < 64) {
-                            const dest_pixel = &self.display[y_coord][x_coord];
+                        const pixel = (sprite >> @truncate(7 - i)) & 1;
+                        const mask: u8 = pixel * 255;
 
-                            self.registers.v[0xF] = dest_pixel.*;
-                            dest_pixel.* ^= mask;
-                            self.registers.v[0xF] ^= mask;
-                            self.registers.v[0xF] &= 1;
-                        }
+                        const dest_pixel = &self.display[31 - y_coord][x_coord];
+
+                        self.registers.v[0xF] = dest_pixel.*;
+                        dest_pixel.* ^= mask;
+                        self.registers.v[0xF] ^= mask;
+                        self.registers.v[0xF] &= 1;
                     }
                 }
             },
@@ -246,7 +247,7 @@ pub const CHIP8 = struct {
                 const skip_if_pressed = switch (inst.nibbles.xnn.nn) {
                     0x9E => true,
                     0xA1 => false,
-                    else => unreachable,
+                    else => invalid_inst(inst_bits),
                 };
                 const vx = self.registers.v[inst.nibbles.xnn.x];
                 if (self.input.keys[vx] == skip_if_pressed) {
@@ -267,14 +268,10 @@ pub const CHIP8 = struct {
                         self.registers.i &= 0x0FFF;
                     },
                     0x0A => {
-                        @panic("Not implemented");
-                        // TODO: implement correctly
-                        // if (self.input.key_bits == 0) {
-                        //     self.registers.pc -= 2;
-                        // } else {
-                        //     const key_idx = @ctz(self.input.key_bits);
-                        //     self.registers.v[x] = key_idx;
-                        // }
+                        switch (self.input.key_just_released) {
+                            .key => |k| self.registers.v[x] = k,
+                            .none => self.registers.pc -= 2,
+                        }
                     },
                     0x29 => {
                         const reg_nibble = self.registers.v[x] & 0xF;
@@ -293,20 +290,30 @@ pub const CHIP8 = struct {
                         self.memory.contiguous[self.registers.i + 2] = ones;
                     },
 
-                    0x55 => { // memcpy? // TODO: Configure incrementing i
-                        for (0..x + 1) |reg| {
-                            self.memory.contiguous[self.registers.i + reg] = self.registers.v[reg];
+                    0x55 => {
+                        const count: usize = x;
+                        for (0..count + 1) |reg| {
+                            self.memory.contiguous[self.registers.i] = self.registers.v[reg];
+                            self.registers.i += 1;
                         }
                     },
-                    0x65 => { // memcpy?
-                        for (0..x + 1) |reg| {
-                            self.registers.v[reg] = self.memory.contiguous[self.registers.i + reg];
+                    0x65 => {
+                        const count: usize = x;
+                        for (0..count + 1) |reg| {
+                            self.registers.v[reg] = self.memory.contiguous[self.registers.i];
+                            self.registers.i += 1;
                         }
                     },
-                    else => {},
+                    else => invalid_inst(inst_bits),
                 }
             },
         }
+        self.input.key_just_released = .none;
+    }
+
+    fn invalid_inst(inst_bits: u16) noreturn {
+        // TODO handle invalid instructions
+        std.debug.panic("Invalid instruction: 0x{x}\n", .{inst_bits});
     }
 
     pub const Memory = extern union {
@@ -409,6 +416,7 @@ pub const CHIP8 = struct {
             E: glfw.Key,
             F: glfw.Key,
         },
+        key_just_released: union(enum) { key: u4, none } = .none,
 
         // TODO: refactor
         pub fn on_key_event(glfw_window: *glfw.Window, key: glfw.Key, _: c_int, action: glfw.Action, _: glfw.Mods) callconv(.c) void {
@@ -417,7 +425,12 @@ pub const CHIP8 = struct {
 
             for (mappings_array, 0..) |mapped_key, i| {
                 if (key == mapped_key) {
-                    self.input.keys[i] = action != .release;
+                    if (action == .release) {
+                        self.input.key_just_released = .{ .key = @truncate(i) };
+                        self.input.keys[i] = false;
+                    } else {
+                        self.input.keys[i] = true;
+                    }
                     log.debug("Keypress: {s}, set key 0x{x} to {}", .{
                         @tagName(key),
                         i,
