@@ -93,14 +93,14 @@ pub const CHIP8 = struct {
         // Decremented 60 times per second
         self.delay.ns -|= time;
         self.sound.ns -|= time;
-        log.debug("delay: {d}", .{self.delay.to_seconds()});
+        //log.debug("delay: {d}", .{self.delay.to_seconds()});
         self.execute(inst);
     }
 
     pub fn execute(self: *CHIP8, inst_bits: u16) void {
         const inst: Instruction = @bitCast(inst_bits);
 
-        log.debug("inst: 0x{x}", .{inst_bits});
+        //log.debug("inst: 0x{x}", .{inst_bits});
 
         switch (inst_bits) {
             0x0000...0x0FFF => {
@@ -110,7 +110,7 @@ pub const CHIP8 = struct {
                     },
                     0x00EE => self.registers.pc = self.stack.pop(), // Return
                     else => {
-                        log.debug("Invalid inst: 0x{x}", .{inst_bits});
+                        //log.debug("Invalid inst: 0x{x}", .{inst_bits});
                     },
                 }
             },
@@ -242,14 +242,14 @@ pub const CHIP8 = struct {
                     }
                 }
             },
-            0xE000...0xEFFF => keys: {
+            0xE000...0xEFFF => {
                 const skip_if_pressed = switch (inst.nibbles.xnn.nn) {
                     0x9E => true,
                     0xA1 => false,
-                    else => break :keys,
+                    else => unreachable,
                 };
-                const x = inst.nibbles.xnn.x;
-                if (self.input.keys[x] == skip_if_pressed) {
+                const vx = self.registers.v[inst.nibbles.xnn.x];
+                if (self.input.keys[vx] == skip_if_pressed) {
                     self.registers.pc += 2;
                 }
             },
@@ -370,11 +370,8 @@ pub const CHIP8 = struct {
             x: u4,
         };
 
+        // TODO
         const Opcode = enum(u4) {
-            add = 0x0,
-            sub = 0x1,
-            mul = 0xF,
-
             // zig fmt: off
             // Arithmetic and logic
             pub const AL = enum(u4) {
@@ -387,7 +384,6 @@ pub const CHIP8 = struct {
                 shr    = 0x6,
                 subyx  = 0x7,
                 shl    = 0xE,
-                _,
             };
             // zig fmt: on
         };
