@@ -11,13 +11,17 @@ pub const PIXEL_COUNT = 64 * 32;
 
 pub fn main() !void {
     var arena = heap.ArenaAllocator.init(heap.page_allocator);
+    defer _ = arena.reset(.free_all);
     const allocator = arena.allocator();
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
+    const stdout = std.fs.File.stdout();
+    var stdout_writer: std.fs.File.Writer = .init(stdout, &.{});
+
     if (args.len != 2) {
-        help();
+        try help(&stdout_writer.interface);
         std.process.exit(1);
     }
 
@@ -32,14 +36,18 @@ pub fn main() !void {
     window.attach_cpu(&cpu);
 
     while (!window.should_close()) {
-        std.Thread.sleep(1_000_000);
         cpu.cycle();
         window.draw(cpu.display);
     }
 }
 
-pub fn help() void {
-    std.debug.print("TODO: help message\n", .{});
+pub fn help(w: *std.Io.Writer) !void {
+    try w.writeAll(
+        \\Usage: chip-ate [options] rom_path
+        \\  options:
+        \\    -h, --help       Print this message and exit
+        \\
+    );
 }
 
 // TODO: improve

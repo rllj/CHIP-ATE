@@ -2,8 +2,7 @@ const std = @import("std");
 const glfw = @import("zglfw");
 const t = std.testing;
 
-const random = std.crypto.random;
-const readInt = std.mem.readInt;
+const Random = std.Random;
 
 const assert = std.debug.assert;
 
@@ -41,8 +40,9 @@ pub const CHIP8 = struct {
     // Timers
     delay: Countdown,
     sound: Countdown,
-    input: Input,
+    time_to_next_frame: Countdown, // Draws a frame and is reset when it reaches 0
     display: *[SCREEN_HEIGHT][SCREEN_WIDTH]u8,
+    input: Input,
     timer: std.time.Timer,
 
     pub fn init(rom: []const u8, allocator: std.mem.Allocator) !CHIP8 {
@@ -60,8 +60,9 @@ pub const CHIP8 = struct {
             .memory = memory,
             .stack = .{},
             .registers = .{ .pc = pc },
-            .delay = Countdown.from_u8(0),
-            .sound = Countdown.from_u8(0),
+            .delay = Countdown.from_u8_seconds(0),
+            .sound = Countdown.from_u8_seconds(0),
+            .time_to_next_frame = .{ .ns = 1_000_000_000 / 60 },
             .input = .{ // TODO: Config
                 .mappings = .{
                     // zig fmt: off
@@ -100,10 +101,12 @@ pub const CHIP8 = struct {
         const inst = inst_upper << 8 | inst_lower;
         pc.* += 2;
 
-        const time = self.timer.lap() * 60;
         // Decremented 60 times per second
-        self.delay.ns -|= time;
-        self.sound.ns -|= time;
+        const time = self.timer.lap();
+        self.delay.ns -|= time * 60;
+        self.sound.ns -|= time * 60;
+        if (self.time_to_next_frame.ns == 0) self.time_to_next_frame.ns = 1_000_000_000 / 60;
+        self.time_to_next_frame.ns -|= time;
         self.execute(inst);
     }
 
@@ -217,7 +220,8 @@ pub const CHIP8 = struct {
             0xC000...0xCFFF => { // Random number and mask
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
-                var rand = random.int(u8);
+                var prng = Random.DefaultPrng.init(123);
+                var rand: u8 = @truncate(prng.next());
                 rand &= nn;
                 self.registers.v[x] = rand;
             },
@@ -251,6 +255,8 @@ pub const CHIP8 = struct {
                         self.registers.v[0xF] &= 1;
                     }
                 }
+                std.Thread.sleep(self.time_to_next_frame.ns);
+                self.time_to_next_frame.ns = 1_000_000_000 / 60;
             },
             0xE000...0xEFFF => {
                 const skip_if_pressed = switch (inst.nibbles.xnn.nn) {
@@ -268,8 +274,8 @@ pub const CHIP8 = struct {
                 switch (inst.nibbles.xnn.nn) {
                     // Timers
                     0x07 => self.registers.v[x] = self.delay.to_seconds(),
-                    0x15 => self.delay = Countdown.from_u8(self.registers.v[x]),
-                    0x18 => self.sound = Countdown.from_u8(self.registers.v[x]),
+                    0x15 => self.delay = Countdown.from_u8_seconds(self.registers.v[x]),
+                    0x18 => self.sound = Countdown.from_u8_seconds(self.registers.v[x]),
 
                     0x1E => {
                         self.registers.i += self.registers.v[x];
@@ -461,7 +467,7 @@ pub const CHIP8 = struct {
             return @truncate(self.ns / 1_000_000_000);
         }
 
-        pub fn from_u8(from: u8) Countdown {
+        pub fn from_u8_seconds(from: u8) Countdown {
             const extended_from: u64 = from;
             return .{ .ns = extended_from * 1_000_000_000 };
         }
