@@ -132,18 +132,18 @@ pub const Window = struct {
         self.framebuffer.bind();
         defer self.framebuffer.unbind();
 
-        const err = gl.GetError();
-        if (err != gl.NO_ERROR) {
-            log.err("{}\n", .{err});
-        }
-
         self.shader.use();
 
         self.screen_quad.bind();
         defer ScreenQuad.unbind();
 
-        gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
+        gl.DrawElements(gl.TRIANGLES, 3, gl.UNSIGNED_INT, 0);
         self.shader.free();
+
+        const err = gl.GetError();
+        if (err != gl.NO_ERROR) {
+            log.err("{}\n", .{err});
+        }
 
         glfw.swapBuffers(self.glfw_window);
     }
