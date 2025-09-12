@@ -2,8 +2,19 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-
     const optimize = b.standardOptimizeOption(.{});
+
+    const Display = enum { x11, wayland };
+    const display = b.option(
+        Display,
+        "display-server",
+        "Whether to use X11 or Wayland (defaults to Wayland)",
+    ) orelse .wayland;
+    const shared = b.option(
+        bool,
+        "glfw-shared",
+        "Whether to use glfw as a shared library",
+    ) orelse false;
 
     const chip_ate_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -17,7 +28,11 @@ pub fn build(b: *std.Build) void {
     });
     exe.bundle_ubsan_rt = true;
 
-    const zglfw = b.dependency("zglfw", .{});
+    const zglfw = b.dependency("zglfw", .{
+        .x11 = display == .x11,
+        .wayland = display == .wayland,
+        .shared = shared,
+    });
     exe.root_module.addImport("zglfw", zglfw.module("root"));
     if (target.result.os.tag != .emscripten) {
         exe.linkLibrary(zglfw.artifact("glfw"));
