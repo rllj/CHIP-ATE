@@ -4,7 +4,7 @@ A small CHIP-8 interpreter I've been working on after being inspired by [isakbju
 
 Tested using [Timendus' tremendous test suite](https://github.com/Timendus/chip8-test-suite)
 
-Currently passes all relevant tests for the original CHIP-8 except sound, display wait, and for some reason which I can't figure out, clipping. 
+Currently passes all relevant tests for the original CHIP-8 except sound and clipping.
 
 ## Build
 

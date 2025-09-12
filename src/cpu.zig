@@ -38,9 +38,9 @@ pub const CHIP8 = struct {
     stack: Stack, // Cheat a little and have the stack outside of RAM
     registers: Registers,
     // Timers
-    delay: Countdown,
-    sound: Countdown,
-    time_to_next_frame: Countdown, // Draws a frame and is reset when it reaches 0
+    delay: u8,
+    sound: u8,
+    countdown_60hz: u64,
     display: *[SCREEN_HEIGHT][SCREEN_WIDTH]u8,
     input: Input,
     timer: std.time.Timer,
@@ -60,9 +60,9 @@ pub const CHIP8 = struct {
             .memory = memory,
             .stack = .{},
             .registers = .{ .pc = pc },
-            .delay = Countdown.from_u8_seconds(0),
-            .sound = Countdown.from_u8_seconds(0),
-            .time_to_next_frame = .{ .ns = 1_000_000_000 / 60 },
+            .delay = 0,
+            .sound = 0,
+            .countdown_60hz = 1_000_000_000 / 60,
             .input = .{ // TODO: Config
                 .mappings = .{
                     // zig fmt: off
@@ -101,12 +101,8 @@ pub const CHIP8 = struct {
         const inst = inst_upper << 8 | inst_lower;
         pc.* += 2;
 
-        const time = self.timer.lap();
-        self.delay.ns -|= time * 60;
-        self.sound.ns -|= time * 60;
-        if (self.time_to_next_frame.ns == 0) self.time_to_next_frame.ns = 1_000_000_000 / 60;
-        self.time_to_next_frame.ns -|= time;
         self.execute(inst);
+        _ = self.update_time();
     }
 
     pub fn execute(self: *CHIP8, inst_bits: u16) void {
@@ -171,35 +167,38 @@ pub const CHIP8 = struct {
                 const x = inst.nibbles.xyo.x;
                 const y = inst.nibbles.xyo.y;
                 const al = inst.nibbles.xyo.al;
-                const vx = &self.registers.v[x];
-                const vy = &self.registers.v[y];
-                const vf = &self.registers.v[0xF];
+                const v = &self.registers.v;
+                // The registers have to be stored here as non-pointers to
+                // avoid issues with pointer aliasing when the two registers
+                // are the same.
+                const vx = v[x];
+                const vy = v[y];
 
-                vf.* = 0;
+                v[0xF] = 0;
 
                 switch (al) {
-                    0x0 => vx.* = vy.*,
-                    0x1 => vx.* |= vy.*,
-                    0x2 => vx.* &= vy.*,
-                    0x3 => vx.* ^= vy.*,
+                    0x0 => v[x] = vy,
+                    0x1 => v[x] = vx | vy,
+                    0x2 => v[x] = vx & vy,
+                    0x3 => v[x] = vx ^ vy,
                     0x4 => {
-                        vx.*, vf.* = @addWithOverflow(vx.*, vy.*);
+                        v[x], v[0xF] = @addWithOverflow(vx, vy);
                     },
                     0x5 => {
-                        vx.*, vf.* = @subWithOverflow(vx.*, vy.*);
-                        vf.* ^= 1;
+                        v[x], v[0xF] = @subWithOverflow(vx, vy);
+                        v[0xF] ^= 1;
                     },
                     0x7 => {
-                        vx.*, vf.* = @subWithOverflow(vy.*, vx.*);
-                        vf.* ^= 1;
+                        v[x], v[0xF] = @subWithOverflow(vy, vx);
+                        v[0xF] ^= 1;
                     },
                     0x6 => {
-                        const overflow = vy.* & 1;
-                        vx.* = vy.* >> 1;
-                        vf.* = overflow;
+                        const overflow = vy & 1;
+                        v[x] = vy >> 1;
+                        v[0xF] = overflow;
                     },
                     0xE => {
-                        vx.*, vf.* = @shlWithOverflow(vy.*, 1);
+                        v[x], v[0xF] = @shlWithOverflow(vy, 1);
                     },
                     else => invalid_inst(inst_bits),
                 }
@@ -254,8 +253,7 @@ pub const CHIP8 = struct {
                         self.registers.v[0xF] &= 1;
                     }
                 }
-                std.Thread.sleep(self.time_to_next_frame.ns);
-                self.time_to_next_frame.ns = 1_000_000_000 / 60;
+                while (!self.update_time()) {}
             },
             0xE000...0xEFFF => {
                 const skip_if_pressed = switch (inst.nibbles.xnn.nn) {
@@ -272,9 +270,9 @@ pub const CHIP8 = struct {
                 const x = inst.nibbles.xnn.x;
                 switch (inst.nibbles.xnn.nn) {
                     // Timers
-                    0x07 => self.registers.v[x] = self.delay.to_seconds(),
-                    0x15 => self.delay = Countdown.from_u8_seconds(self.registers.v[x]),
-                    0x18 => self.sound = Countdown.from_u8_seconds(self.registers.v[x]),
+                    0x07 => self.registers.v[x] = self.delay,
+                    0x15 => self.delay = self.registers.v[x],
+                    0x18 => self.sound = self.registers.v[x],
 
                     0x1E => {
                         self.registers.i += self.registers.v[x];
@@ -323,6 +321,18 @@ pub const CHIP8 = struct {
             },
         }
         self.input.key_just_released = .none;
+    }
+
+    pub fn update_time(self: *CHIP8) bool {
+        const time = self.timer.lap();
+        self.countdown_60hz -|= time;
+        if (self.countdown_60hz == 0) {
+            self.delay -|= 1;
+            self.sound -|= 1;
+            self.countdown_60hz = 1_000_000_000 / 60;
+            return true;
+        }
+        return false;
     }
 
     fn invalid_inst(inst_bits: u16) noreturn {
@@ -456,19 +466,6 @@ pub const CHIP8 = struct {
                     });
                 }
             }
-        }
-    };
-
-    pub const Countdown = struct {
-        ns: u64,
-
-        pub fn to_seconds(self: Countdown) u8 {
-            return @truncate(self.ns / 1_000_000_000);
-        }
-
-        pub fn from_u8_seconds(from: u8) Countdown {
-            const extended_from: u64 = from;
-            return .{ .ns = extended_from * 1_000_000_000 };
         }
     };
 };
