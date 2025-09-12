@@ -101,7 +101,6 @@ pub const CHIP8 = struct {
         const inst = inst_upper << 8 | inst_lower;
         pc.* += 2;
 
-        // Decremented 60 times per second
         const time = self.timer.lap();
         self.delay.ns -|= time * 60;
         self.sound.ns -|= time * 60;
