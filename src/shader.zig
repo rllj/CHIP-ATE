@@ -1,6 +1,8 @@
 const std = @import("std");
 const gl = @import("gl");
 
+const log = std.log.scoped(.shader);
+
 pub const Shader = struct {
     handle: c_uint,
 
@@ -30,33 +32,30 @@ pub const Shader = struct {
             var buf: [1024]u8 = undefined;
             var len: c_int = 0;
             gl.GetShaderInfoLog(vert_shader, 1024, &len, &buf);
-            std.debug.print(
+            log.debug(
                 \\Vertex shader log:
                 \\{s}
                 \\--------------
-                \\
             , .{buf[0..@intCast(len)]});
         }
         {
             var buf: [1024]u8 = undefined;
             var len: c_int = 0;
             gl.GetShaderInfoLog(frag_shader, 1024, &len, &buf);
-            std.debug.print(
+            log.debug(
                 \\Fragment shader log:
                 \\{s}
                 \\--------------
-                \\
             , .{buf[0..@intCast(len)]});
         }
         {
             var buf: [1024]u8 = undefined;
             var len: c_int = 0;
             gl.GetProgramInfoLog(program, 1024, &len, &buf);
-            std.debug.print(
+            log.debug(
                 \\Shader program log:
                 \\{s}
                 \\--------------
-                \\
             , .{buf[0..@intCast(len)]});
         }
 

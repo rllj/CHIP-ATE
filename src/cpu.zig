@@ -9,6 +9,10 @@ const assert = std.debug.assert;
 
 const log = std.log.scoped(.cpu);
 
+const SCREEN_WIDTH = @import("main.zig").SCREEN_WIDTH;
+const SCREEN_HEIGHT = @import("main.zig").SCREEN_HEIGHT;
+const PIXEL_COUNT = @import("main.zig").PIXEL_COUNT;
+
 // Font taken directly from
 // https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
 const FONT = [80]u8{
@@ -38,17 +42,20 @@ pub const CHIP8 = struct {
     delay: Countdown,
     sound: Countdown,
     input: Input,
-    display: *[32][64]u8,
+    display: *[SCREEN_HEIGHT][SCREEN_WIDTH]u8,
     timer: std.time.Timer,
 
-    pub fn init(display: *[32][64]u8, rom: []const u8) CHIP8 {
+    pub fn init(rom: []const u8, allocator: std.mem.Allocator) !CHIP8 {
         comptime assert(@sizeOf(Memory) == 0x1000);
         var memory: Memory = .{ .sections = .{} };
+        @memcpy(memory.sections.ram[0..rom.len], rom);
+        const pc = 0x0200;
 
         const timer = std.time.Timer.start() catch unreachable;
 
-        @memcpy(memory.sections.ram[0..rom.len], rom);
-        const pc = 0x0200;
+        const pixels = try allocator.create([SCREEN_HEIGHT][SCREEN_WIDTH]u8);
+        @memset(@as(*[SCREEN_HEIGHT * SCREEN_WIDTH]u8, @ptrCast(pixels)), 0);
+
         return .{
             .memory = memory,
             .stack = .{},
@@ -77,9 +84,13 @@ pub const CHIP8 = struct {
                 // zig fmt: on
                 },
             },
-            .display = display,
+            .display = pixels,
             .timer = timer,
         };
+    }
+
+    pub fn deinit(self: CHIP8, allocator: std.mem.Allocator) void {
+        allocator.free(@as(*[PIXEL_COUNT]u8, @ptrCast(self.display)));
     }
 
     pub fn cycle(self: *CHIP8) void {
@@ -105,12 +116,10 @@ pub const CHIP8 = struct {
             0x0000...0x0FFF => {
                 switch (inst_bits) {
                     0x00E0 => { // Clear screen
-                        @memset(@as(*[32 * 64]u8, @ptrCast(self.display)), 0);
+                        @memset(@as(*[PIXEL_COUNT]u8, @ptrCast(self.display)), 0);
                     },
                     0x00EE => self.registers.pc = self.stack.pop(), // Return
-                    else => {
-                        //log.debug("Invalid inst: 0x{x}", .{inst_bits});
-                    },
+                    else => invalid_inst(inst_bits),
                 }
             },
             0x1000...0x1FFF => { // Jump
@@ -218,8 +227,8 @@ pub const CHIP8 = struct {
                 const n = inst.nibbles.xyn.n;
                 assert(inst_bits & 0xF == n);
 
-                const start_x: u16 = self.registers.v[x] % 64;
-                const start_y: u16 = self.registers.v[y] % 32;
+                const start_x: u16 = self.registers.v[x] % SCREEN_WIDTH;
+                const start_y: u16 = self.registers.v[y] % SCREEN_HEIGHT;
 
                 self.registers.v[0xF] = 0;
 
@@ -418,8 +427,12 @@ pub const CHIP8 = struct {
         },
         key_just_released: union(enum) { key: u4, none } = .none,
 
-        // TODO: refactor
         pub fn on_key_event(glfw_window: *glfw.Window, key: glfw.Key, _: c_int, action: glfw.Action, _: glfw.Mods) callconv(.c) void {
+            if (key == .escape) {
+                glfw_window.setShouldClose(true);
+                return;
+            }
+
             const self = glfw.getWindowUserPointer(glfw_window, CHIP8) orelse unreachable;
             const mappings_array: [16]glfw.Key = @bitCast(self.input.mappings);
 
@@ -456,7 +469,7 @@ pub const CHIP8 = struct {
 };
 
 test "load immediate" {
-    var display: [32][64]u8 = undefined;
+    var display: [SCREEN_HEIGHT][SCREEN_WIDTH]u8 = undefined;
     var cpu = CHIP8.init(&display, &.{
         0x60, 0xED,
         0x61, 0xBF,
@@ -475,7 +488,7 @@ test "load immediate" {
 }
 
 test "load index" {
-    var display: [32][64]u8 = undefined;
+    var display: [SCREEN_HEIGHT][SCREEN_WIDTH]u8 = undefined;
     var cpu = CHIP8.init(&display, &.{
         0xA1, 0x12,
         0xAF, 0xFF,
@@ -493,7 +506,7 @@ test "load index" {
 }
 
 test "font char offset" {
-    var display: [32][64]u8 = undefined;
+    var display: [SCREEN_HEIGHT][SCREEN_WIDTH]u8 = undefined;
     var cpu = CHIP8.init(&display, &.{
         0x60, 0x00,
         0xF0, 0x29,
@@ -526,7 +539,7 @@ test "font char offset" {
 }
 
 test "decimal conversion" {
-    var display: [32][64]u8 = undefined;
+    var display: [SCREEN_HEIGHT][SCREEN_WIDTH]u8 = undefined;
     var cpu = CHIP8.init(&display, &.{
         0xAF, 0x00,
         0x60, 0x80,

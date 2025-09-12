@@ -5,15 +5,15 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const render_mod = b.createModule(.{
+    const chip_ate_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const exe = b.addExecutable(.{
-        .name = "render",
-        .root_module = render_mod,
+        .name = "chip-ate",
+        .root_module = chip_ate_mod,
     });
     exe.bundle_ubsan_rt = true;
 
@@ -42,7 +42,7 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(b.getInstallStep());
 
     const tests = b.addTest(.{
-        .root_module = render_mod,
+        .root_module = chip_ate_mod,
     });
 
     const run_tests = b.addRunArtifact(tests);
