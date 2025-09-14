@@ -1,6 +1,7 @@
 const std = @import("std");
 const heap = std.heap;
 const mem = std.mem;
+const assert = std.debug.assert;
 const glfw = @import("zglfw");
 
 const CHIP8 = @import("chip-ate").CHIP8;
@@ -30,22 +31,22 @@ pub fn main() !void {
     defer allocator.free(rom);
 
     var cpu = try CHIP8.init(rom, .{
-        .@"1" = glfw.Key.one,
-        .@"2" = glfw.Key.two,
-        .@"3" = glfw.Key.three,
-        .C = glfw.Key.four,
-        .@"4" = glfw.Key.q,
-        .@"5" = glfw.Key.w,
-        .@"6" = glfw.Key.e,
-        .D = glfw.Key.r,
-        .@"7" = glfw.Key.a,
-        .@"8" = glfw.Key.s,
-        .@"9" = glfw.Key.d,
-        .E = glfw.Key.f,
-        .A = glfw.Key.z,
-        .@"0" = glfw.Key.x,
-        .B = glfw.Key.c,
-        .F = glfw.Key.v,
+        .@"1" = @intFromEnum(glfw.Key.one),
+        .@"2" = @intFromEnum(glfw.Key.two),
+        .@"3" = @intFromEnum(glfw.Key.three),
+        .C = @intFromEnum(glfw.Key.four),
+        .@"4" = @intFromEnum(glfw.Key.q),
+        .@"5" = @intFromEnum(glfw.Key.w),
+        .@"6" = @intFromEnum(glfw.Key.e),
+        .D = @intFromEnum(glfw.Key.r),
+        .@"7" = @intFromEnum(glfw.Key.a),
+        .@"8" = @intFromEnum(glfw.Key.s),
+        .@"9" = @intFromEnum(glfw.Key.d),
+        .E = @intFromEnum(glfw.Key.f),
+        .A = @intFromEnum(glfw.Key.z),
+        .@"0" = @intFromEnum(glfw.Key.x),
+        .B = @intFromEnum(glfw.Key.c),
+        .F = @intFromEnum(glfw.Key.v),
     }, allocator);
     defer cpu.deinit(allocator);
 
@@ -53,9 +54,9 @@ pub fn main() !void {
     defer window.deinit();
 
     glfw.setWindowUserPointer(window.glfw_window, &cpu);
-    glfw.setKeyCallback(window.glfw_window, on_key_action);
+    _ = glfw.setKeyCallback(window.glfw_window, on_key_action);
 
-    while (!window.should_close()) {
+    while (!window.glfw_window.shouldClose()) {
         cpu.cycle();
         window.draw(cpu.display);
     }
@@ -65,12 +66,17 @@ fn on_key_action(
     window: *glfw.Window,
     key: glfw.Key,
     _: c_int,
-    action: glfw.Action,
+    glfw_action: glfw.Action,
     _: glfw.Mods,
-) void {
-    const cpu = window.getUserPointer(CHIP8) orelse return error.GLFWWindowError;
-    const chip8_
-    cpu.input.on_key_event(@as(CHIP8.Input.Key, key));
+) callconv(.c) void {
+    const cpu = window.getUserPointer(CHIP8) orelse unreachable;
+    const action: CHIP8.Input.Action = if (glfw_action == .release) .release else .press;
+    cpu.input.on_key_event(glfw_key_to_u32(key), action);
+}
+
+pub fn glfw_key_to_u32(glfw_key: glfw.Key) u32 {
+    comptime assert(@sizeOf(glfw.Key) <= @sizeOf(u32));
+    return @bitCast(@intFromEnum(glfw_key));
 }
 
 pub fn help(w: *std.Io.Writer) !void {

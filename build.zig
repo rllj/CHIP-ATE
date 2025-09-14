@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const Display = enum { x11, wayland };
+
     const display = b.option(
         Display,
         "display-server",
@@ -15,19 +16,28 @@ pub fn build(b: *std.Build) void {
         "glfw-shared",
         "Whether to use glfw as a shared library",
     ) orelse false;
+    const is_wasm_build = b.option(
+        bool,
+        "wasm",
+        "Whether to build as a wasm lib",
+    ) orelse false;
 
     const chip_ate_mod = b.addModule("chip-ate-lib", .{
         .root_source_file = b.path("src/libchip8/cpu.zig"),
         .target = target,
         .optimize = optimize,
     });
+    const options = b.addOptions();
+    options.addOption(bool, "is_wasm", is_wasm_build);
+    chip_ate_mod.addOptions("build_options", options);
+
     const chip_ate_lib = b.addLibrary(.{
         .name = "chip-ate",
         .root_module = chip_ate_mod,
     });
 
     const exe = exe: {
-        if (target.result.os.tag != .emscripten) {
+        if (!is_wasm_build) {
             const native_mod = b.createModule(.{
                 .root_source_file = b.path("src/native/main.zig"),
                 .target = target,
@@ -61,14 +71,15 @@ pub fn build(b: *std.Build) void {
 
             break :exe native_exe;
         } else {
-            const wasm = b.addExecutable(.{
+            const wasm = b.addLibrary(.{
                 .name = "chip-ate-wasm",
                 .root_module = b.createModule(.{
-                    .root_source_file = b.path("src/wasm/main.zig"),
+                    .root_source_file = b.path("src/wasm/root.zig"),
                     .target = b.resolveTargetQuery(.{
                         .cpu_arch = .wasm32,
                         .os_tag = .freestanding,
                     }),
+                    .optimize = optimize,
                 }),
             });
             break :exe wasm;
@@ -76,6 +87,8 @@ pub fn build(b: *std.Build) void {
     };
 
     exe.root_module.addImport("chip-ate", chip_ate_lib.root_module);
+
+    b.installArtifact(exe);
 
     const run_step = b.step("run", "Run the app");
 

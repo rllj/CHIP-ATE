@@ -1,8 +1,13 @@
 const std = @import("std");
 const glfw = @import("zglfw");
 const t = std.testing;
+const is_wasm = @import("build_options").is_wasm;
 
 const Random = std.Random;
+
+const WASMTimer = @import("./timer.zig");
+const TimeType = if (is_wasm) f64 else u64;
+const Timer = if (is_wasm) WASMTimer else std.time.Timer;
 
 const assert = std.debug.assert;
 
@@ -43,7 +48,7 @@ pub const CHIP8 = struct {
     countdown_60hz: u64,
     display: *[SCREEN_HEIGHT][SCREEN_WIDTH]u8,
     input: Input,
-    timer: std.time.Timer,
+    timer: Timer,
 
     pub fn init(
         rom: []const u8,
@@ -55,7 +60,7 @@ pub const CHIP8 = struct {
         @memcpy(memory.sections.ram[0..rom.len], rom);
         const pc = 0x0200;
 
-        const timer = std.time.Timer.start() catch unreachable;
+        const timer = Timer.start() catch unreachable;
 
         const pixels = try allocator.create([SCREEN_HEIGHT][SCREEN_WIDTH]u8);
         @memset(@as(*[SCREEN_HEIGHT * SCREEN_WIDTH]u8, @ptrCast(pixels)), 0);
@@ -67,7 +72,7 @@ pub const CHIP8 = struct {
             .delay = 0,
             .sound = 0,
             .countdown_60hz = 1_000_000_000 / 60,
-            .inputs = key_mappings,
+            .input = .{ .mappings = key_mappings },
             .display = pixels,
             .timer = timer,
         };
@@ -352,7 +357,7 @@ pub const CHIP8 = struct {
     };
 
     pub const Registers = struct {
-        pc: u16 = 0x0100,
+        pc: u16 = 0x0200,
         i: u16 = 0,
         v: [16]u8 = @bitCast(@as(u128, 0)),
     };
@@ -406,7 +411,7 @@ pub const CHIP8 = struct {
     pub const Input = struct {
         keys: [16]bool = .{false} ** 16,
         mappings: Mappings,
-        key_just_released: union(enum) { key: u32, none } = .none,
+        key_just_released: union(enum) { key: u8, none } = .none,
 
         pub const Mappings = packed struct {
             @"0": u32,
@@ -435,18 +440,18 @@ pub const CHIP8 = struct {
         };
 
         // To be used in a key callback
-        pub fn on_key_event(self: Input, key: u32, action: Action) void {
+        pub fn on_key_event(self: *Input, key: u32, action: Action) void {
             const mappings_array: [16]u32 = @bitCast(self.mappings);
             for (mappings_array, 0..) |mapped_key, i| {
                 if (key == mapped_key) {
                     if (action == .release) {
-                        self.input.key_just_released = .{ .key = @truncate(i) };
-                        self.input.keys[i] = false;
+                        self.key_just_released = .{ .key = @truncate(i) };
+                        self.keys[i] = false;
                     } else {
-                        self.input.keys[i] = true;
+                        self.keys[i] = true;
                     }
-                    log.debug("Keypress: {s}, set key 0x{x} to {}", .{
-                        @tagName(key),
+                    log.debug("Keypress: {d}, set key 0x{x} to {}", .{
+                        key,
                         i,
                         action != .release,
                     });
