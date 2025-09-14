@@ -16,38 +16,66 @@ pub fn build(b: *std.Build) void {
         "Whether to use glfw as a shared library",
     ) orelse false;
 
-    const chip_ate_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+    const chip_ate_mod = b.addModule("chip-ate-lib", .{
+        .root_source_file = b.path("src/libchip8/cpu.zig"),
         .target = target,
         .optimize = optimize,
     });
-
-    const exe = b.addExecutable(.{
+    const chip_ate_lib = b.addLibrary(.{
         .name = "chip-ate",
         .root_module = chip_ate_mod,
     });
-    exe.bundle_ubsan_rt = true;
 
-    const zglfw = b.dependency("zglfw", .{
-        .x11 = display == .x11,
-        .wayland = display == .wayland,
-        .shared = shared,
-    });
-    exe.root_module.addImport("zglfw", zglfw.module("root"));
-    if (target.result.os.tag != .emscripten) {
-        exe.linkLibrary(zglfw.artifact("glfw"));
-    }
+    const exe = exe: {
+        if (target.result.os.tag != .emscripten) {
+            const native_mod = b.createModule(.{
+                .root_source_file = b.path("src/native/main.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
 
-    const gl_bindings = @import("zigglgen").generateBindingsModule(b, .{
-        .api = .gl,
-        .version = .@"4.1",
-        .profile = .core,
-        .extensions = &.{},
-    });
+            const native_exe = b.addExecutable(.{
+                .name = "chip-ate",
+                .root_module = native_mod,
+            });
+            native_exe.bundle_ubsan_rt = true;
 
-    exe.root_module.addImport("gl", gl_bindings);
+            const zglfw = b.dependency("zglfw", .{
+                .x11 = display == .x11,
+                .wayland = display == .wayland,
+                .shared = shared,
+            });
+            native_exe.root_module.addImport("zglfw", zglfw.module("root"));
+            if (target.result.os.tag != .emscripten) {
+                native_exe.linkLibrary(zglfw.artifact("glfw"));
+            }
 
-    b.installArtifact(exe);
+            const gl_bindings = @import("zigglgen").generateBindingsModule(b, .{
+                .api = .gl,
+                .version = .@"4.1",
+                .profile = .core,
+                .extensions = &.{},
+            });
+
+            native_exe.root_module.addImport("gl", gl_bindings);
+
+            break :exe native_exe;
+        } else {
+            const wasm = b.addExecutable(.{
+                .name = "chip-ate-wasm",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/wasm/main.zig"),
+                    .target = b.resolveTargetQuery(.{
+                        .cpu_arch = .wasm32,
+                        .os_tag = .freestanding,
+                    }),
+                }),
+            });
+            break :exe wasm;
+        }
+    };
+
+    exe.root_module.addImport("chip-ate", chip_ate_lib.root_module);
 
     const run_step = b.step("run", "Run the app");
 
@@ -55,13 +83,4 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     run_cmd.step.dependOn(b.getInstallStep());
-
-    const tests = b.addTest(.{
-        .root_module = chip_ate_mod,
-    });
-
-    const run_tests = b.addRunArtifact(tests);
-
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_tests.step);
 }

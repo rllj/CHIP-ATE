@@ -5,11 +5,11 @@ const gl = @import("gl");
 
 const Shader = @import("shader.zig").Shader;
 const Framebuffer = @import("framebuffer.zig").Framebuffer;
-const CHIP8 = @import("cpu.zig").CHIP8;
+const CHIP8 = @import("chip-ate").CHIP8;
 
-const SCREEN_WIDTH = @import("main.zig").SCREEN_WIDTH;
-const SCREEN_HEIGHT = @import("main.zig").SCREEN_HEIGHT;
-const PIXEL_COUNT = @import("main.zig").PIXEL_COUNT;
+const SCREEN_WIDTH = @import("chip-ate").SCREEN_WIDTH;
+const SCREEN_HEIGHT = @import("chip-ate").SCREEN_HEIGHT;
+const PIXEL_COUNT = @import("chip-ate").PIXEL_COUNT;
 
 const ScreenQuad = struct {
     handle: u32,
@@ -114,11 +114,6 @@ pub const Window = struct {
         };
     }
 
-    pub fn attach_cpu(self: Window, cpu: *CHIP8) void {
-        glfw.setWindowUserPointer(self.glfw_window, cpu);
-        _ = glfw.setKeyCallback(self.glfw_window, CHIP8.Input.on_key_event);
-    }
-
     pub fn draw(
         self: Window,
         pixels: *[SCREEN_HEIGHT][SCREEN_WIDTH]u8,
@@ -146,10 +141,6 @@ pub const Window = struct {
         }
 
         glfw.swapBuffers(self.glfw_window);
-    }
-
-    pub fn should_close(self: Window) bool {
-        return self.glfw_window.shouldClose();
     }
 
     pub fn deinit(self: Window) void {

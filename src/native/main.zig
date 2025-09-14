@@ -1,8 +1,9 @@
 const std = @import("std");
 const heap = std.heap;
 const mem = std.mem;
+const glfw = @import("zglfw");
 
-const CHIP8 = @import("cpu.zig").CHIP8;
+const CHIP8 = @import("chip-ate").CHIP8;
 const Window = @import("window.zig").Window;
 
 pub const SCREEN_WIDTH = 64;
@@ -28,17 +29,48 @@ pub fn main() !void {
     const rom = try read_file_from_path(allocator, args[1]);
     defer allocator.free(rom);
 
-    var cpu = try CHIP8.init(rom, allocator);
+    var cpu = try CHIP8.init(rom, .{
+        .@"1" = glfw.Key.one,
+        .@"2" = glfw.Key.two,
+        .@"3" = glfw.Key.three,
+        .C = glfw.Key.four,
+        .@"4" = glfw.Key.q,
+        .@"5" = glfw.Key.w,
+        .@"6" = glfw.Key.e,
+        .D = glfw.Key.r,
+        .@"7" = glfw.Key.a,
+        .@"8" = glfw.Key.s,
+        .@"9" = glfw.Key.d,
+        .E = glfw.Key.f,
+        .A = glfw.Key.z,
+        .@"0" = glfw.Key.x,
+        .B = glfw.Key.c,
+        .F = glfw.Key.v,
+    }, allocator);
     defer cpu.deinit(allocator);
 
     const window = try Window.init();
     defer window.deinit();
-    window.attach_cpu(&cpu);
+
+    glfw.setWindowUserPointer(window.glfw_window, &cpu);
+    glfw.setKeyCallback(window.glfw_window, on_key_action);
 
     while (!window.should_close()) {
         cpu.cycle();
         window.draw(cpu.display);
     }
+}
+
+fn on_key_action(
+    window: *glfw.Window,
+    key: glfw.Key,
+    _: c_int,
+    action: glfw.Action,
+    _: glfw.Mods,
+) void {
+    const cpu = window.getUserPointer(CHIP8) orelse return error.GLFWWindowError;
+    const chip8_
+    cpu.input.on_key_event(@as(CHIP8.Input.Key, key));
 }
 
 pub fn help(w: *std.Io.Writer) !void {

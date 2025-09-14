@@ -8,9 +8,9 @@ const assert = std.debug.assert;
 
 const log = std.log.scoped(.cpu);
 
-const SCREEN_WIDTH = @import("main.zig").SCREEN_WIDTH;
-const SCREEN_HEIGHT = @import("main.zig").SCREEN_HEIGHT;
-const PIXEL_COUNT = @import("main.zig").PIXEL_COUNT;
+pub const SCREEN_WIDTH = 64;
+pub const SCREEN_HEIGHT = 32;
+pub const PIXEL_COUNT = 32 * 64;
 
 // Font taken directly from
 // https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
@@ -45,7 +45,11 @@ pub const CHIP8 = struct {
     input: Input,
     timer: std.time.Timer,
 
-    pub fn init(rom: []const u8, allocator: std.mem.Allocator) !CHIP8 {
+    pub fn init(
+        rom: []const u8,
+        key_mappings: CHIP8.Input.Mappings,
+        allocator: std.mem.Allocator,
+    ) !CHIP8 {
         comptime assert(@sizeOf(Memory) == 0x1000);
         var memory: Memory = .{ .sections = .{} };
         @memcpy(memory.sections.ram[0..rom.len], rom);
@@ -63,28 +67,7 @@ pub const CHIP8 = struct {
             .delay = 0,
             .sound = 0,
             .countdown_60hz = 1_000_000_000 / 60,
-            .input = .{ // TODO: Config
-                .mappings = .{
-                    // zig fmt: off
-                .@"1" = glfw.Key.one,
-                .@"2" = glfw.Key.two,
-                .@"3" = glfw.Key.three,
-                .C    = glfw.Key.four,
-                .@"4" = glfw.Key.q,
-                .@"5" = glfw.Key.w,
-                .@"6" = glfw.Key.e,
-                .D    = glfw.Key.r,
-                .@"7" = glfw.Key.a,
-                .@"8" = glfw.Key.s,
-                .@"9" = glfw.Key.d,
-                .E    = glfw.Key.f,
-                .A    = glfw.Key.z,
-                .@"0" = glfw.Key.x,
-                .B    = glfw.Key.c,
-                .F    = glfw.Key.v,
-                // zig fmt: on
-                },
-            },
+            .inputs = key_mappings,
             .display = pixels,
             .timer = timer,
         };
@@ -422,35 +405,38 @@ pub const CHIP8 = struct {
 
     pub const Input = struct {
         keys: [16]bool = .{false} ** 16,
-        mappings: packed struct {
-            @"0": glfw.Key,
-            @"1": glfw.Key,
-            @"2": glfw.Key,
-            @"3": glfw.Key,
-            @"4": glfw.Key,
-            @"5": glfw.Key,
-            @"6": glfw.Key,
-            @"7": glfw.Key,
-            @"8": glfw.Key,
-            @"9": glfw.Key,
-            A: glfw.Key,
-            B: glfw.Key,
-            C: glfw.Key,
-            D: glfw.Key,
-            E: glfw.Key,
-            F: glfw.Key,
-        },
-        key_just_released: union(enum) { key: u4, none } = .none,
+        mappings: Mappings,
+        key_just_released: union(enum) { key: u32, none } = .none,
 
-        pub fn on_key_event(glfw_window: *glfw.Window, key: glfw.Key, _: c_int, action: glfw.Action, _: glfw.Mods) callconv(.c) void {
-            if (key == .escape) {
-                glfw_window.setShouldClose(true);
-                return;
-            }
+        pub const Mappings = packed struct {
+            @"0": u32,
+            @"1": u32,
+            @"2": u32,
+            @"3": u32,
+            @"4": u32,
+            @"5": u32,
+            @"6": u32,
+            @"7": u32,
+            @"8": u32,
+            @"9": u32,
+            A: u32,
+            B: u32,
+            C: u32,
+            D: u32,
+            E: u32,
+            F: u32,
+        };
 
-            const self = glfw.getWindowUserPointer(glfw_window, CHIP8) orelse unreachable;
-            const mappings_array: [16]glfw.Key = @bitCast(self.input.mappings);
+        pub const Key = enum(u32) { _ };
 
+        pub const Action = enum {
+            press,
+            release,
+        };
+
+        // To be used in a key callback
+        pub fn on_key_event(self: Input, key: u32, action: Action) void {
+            const mappings_array: [16]u32 = @bitCast(self.mappings);
             for (mappings_array, 0..) |mapped_key, i| {
                 if (key == mapped_key) {
                     if (action == .release) {
