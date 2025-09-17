@@ -32,3 +32,7 @@ export fn cycle() void {
 export fn get_pixels() *[PIXEL_COUNT]u8 {
     return @ptrCast(cpu.display);
 }
+
+export fn foo() u32 {
+    return 42;
+}

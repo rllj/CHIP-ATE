@@ -72,7 +72,7 @@ pub fn build(b: *std.Build) void {
             break :cmpl native_exe;
         } else {
             const wasm = b.addLibrary(.{
-                .name = "chip-ate-wasm",
+                .name = "chip-ate",
                 .root_module = b.createModule(.{
                     .root_source_file = b.path("src/wasm/root.zig"),
                     .target = b.resolveTargetQuery(.{
@@ -83,6 +83,8 @@ pub fn build(b: *std.Build) void {
                 }),
             });
             wasm.linkLibC();
+            wasm.entry = .disabled;
+            wasm.rdynamic = true;
             break :cmpl wasm;
         }
     };

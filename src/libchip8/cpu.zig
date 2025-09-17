@@ -6,7 +6,7 @@ const is_wasm = @import("build_options").is_wasm;
 const Random = std.Random;
 
 const WASMTimer = @import("./timer.zig").WASMTimer;
-const TimeType = if (is_wasm) f64 else i64;
+const TimeType = if (is_wasm) f64 else u64;
 const Timer = if (is_wasm) WASMTimer else std.time.Timer;
 
 const assert = std.debug.assert;
@@ -313,13 +313,14 @@ pub const CHIP8 = struct {
 
     pub fn update_time(self: *CHIP8) bool {
         const time = self.timer.lap();
-        self.countdown_60hz -= time;
-        if (self.countdown_60hz <= 0) {
+
+        if (time > self.countdown_60hz) {
             self.delay -|= 1;
             self.sound -|= 1;
             self.countdown_60hz = 1_000_000_000 / 60;
             return true;
         }
+        self.countdown_60hz -= time;
         return false;
     }
 
