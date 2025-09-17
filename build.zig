@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
         .root_module = chip_ate_mod,
     });
 
-    const exe = exe: {
+    const compile = cmpl: {
         if (!is_wasm_build) {
             const native_mod = b.createModule(.{
                 .root_source_file = b.path("src/native/main.zig"),
@@ -69,7 +69,7 @@ pub fn build(b: *std.Build) void {
 
             native_exe.root_module.addImport("gl", gl_bindings);
 
-            break :exe native_exe;
+            break :cmpl native_exe;
         } else {
             const wasm = b.addLibrary(.{
                 .name = "chip-ate-wasm",
@@ -83,17 +83,17 @@ pub fn build(b: *std.Build) void {
                 }),
             });
             wasm.linkLibC();
-            break :exe wasm;
+            break :cmpl wasm;
         }
     };
 
-    exe.root_module.addImport("chip-ate", chip_ate_lib.root_module);
+    compile.root_module.addImport("chip-ate", chip_ate_lib.root_module);
 
-    b.installArtifact(exe);
+    b.installArtifact(compile);
 
     const run_step = b.step("run", "Run the app");
 
-    const run_cmd = b.addRunArtifact(exe);
+    const run_cmd = b.addRunArtifact(compile);
     run_step.dependOn(&run_cmd.step);
 
     run_cmd.step.dependOn(b.getInstallStep());
