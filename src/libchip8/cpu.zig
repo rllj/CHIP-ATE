@@ -5,8 +5,8 @@ const is_wasm = @import("build_options").is_wasm;
 
 const Random = std.Random;
 
-const WASMTimer = @import("./timer.zig");
-const TimeType = if (is_wasm) f64 else u64;
+const WASMTimer = @import("./timer.zig").WASMTimer;
+const TimeType = if (is_wasm) f64 else i64;
 const Timer = if (is_wasm) WASMTimer else std.time.Timer;
 
 const assert = std.debug.assert;
@@ -45,7 +45,7 @@ pub const CHIP8 = struct {
     // Timers
     delay: u8,
     sound: u8,
-    countdown_60hz: u64,
+    countdown_60hz: TimeType,
     display: *[SCREEN_HEIGHT][SCREEN_WIDTH]u8,
     input: Input,
     timer: Timer,
@@ -95,6 +95,7 @@ pub const CHIP8 = struct {
 
     pub fn execute(self: *CHIP8, inst_bits: u16) void {
         const inst: Instruction = @bitCast(inst_bits);
+        defer self.input.key_just_released = .none;
 
         log.debug("inst: 0x{x}", .{inst_bits});
 
@@ -104,7 +105,7 @@ pub const CHIP8 = struct {
                     0x00E0 => { // Clear screen
                         @memset(@as(*[PIXEL_COUNT]u8, @ptrCast(self.display)), 0);
                     },
-                    0x00EE => self.registers.pc = self.stack.pop(), // Return
+                    0x00EE => self.registers.pc = self.stack.pop(), // RET
                     else => invalid_inst(inst_bits),
                 }
             },
@@ -202,7 +203,9 @@ pub const CHIP8 = struct {
             0xA000...0xAFFF => { // Set index register to NNN
                 self.registers.i = inst.nibbles.nnn.nnn;
             },
-            0xB000...0xBFFF => self.registers.pc = inst.nibbles.nnn.nnn + self.registers.v[0],
+            0xB000...0xBFFF => {
+                self.registers.pc = inst.nibbles.nnn.nnn + self.registers.v[0];
+            },
             0xC000...0xCFFF => { // Random number and mask
                 const x = inst.nibbles.xnn.x;
                 const nn = inst.nibbles.xnn.nn;
@@ -261,7 +264,6 @@ pub const CHIP8 = struct {
                     0x07 => self.registers.v[x] = self.delay,
                     0x15 => self.delay = self.registers.v[x],
                     0x18 => self.sound = self.registers.v[x],
-
                     0x1E => {
                         self.registers.i += self.registers.v[x];
                         self.registers.v[0xF] = @intFromBool(self.registers.i > 0x0FFF);
@@ -289,7 +291,6 @@ pub const CHIP8 = struct {
                         self.memory.contiguous[self.registers.i + 1] = tens;
                         self.memory.contiguous[self.registers.i + 2] = ones;
                     },
-
                     0x55 => {
                         const count: usize = x;
                         for (0..count + 1) |reg| {
@@ -308,13 +309,12 @@ pub const CHIP8 = struct {
                 }
             },
         }
-        self.input.key_just_released = .none;
     }
 
     pub fn update_time(self: *CHIP8) bool {
         const time = self.timer.lap();
-        self.countdown_60hz -|= time;
-        if (self.countdown_60hz == 0) {
+        self.countdown_60hz -= time;
+        if (self.countdown_60hz <= 0) {
             self.delay -|= 1;
             self.sound -|= 1;
             self.countdown_60hz = 1_000_000_000 / 60;
@@ -431,8 +431,6 @@ pub const CHIP8 = struct {
             E: u32,
             F: u32,
         };
-
-        pub const Key = enum(u32) { _ };
 
         pub const Action = enum {
             press,

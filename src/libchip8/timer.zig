@@ -1,18 +1,19 @@
 const std = @import("std");
 
-var wasm_timer: WASMTimer = undefined;
+var timer: WASMTimer = undefined;
 
-const WASMTimer = struct {
+pub const WASMTimer = struct {
     start_time: f64,
+
+    pub fn start() !WASMTimer {
+        timer = .{ .start_time = std.os.emscripten.emscripten_get_now() };
+        return timer;
+    }
+
+    pub fn lap(_: *WASMTimer) f64 {
+        const now = std.os.emscripten.emscripten_get_now();
+        const res = now - timer.start_time;
+        timer.start_time += now;
+        return res;
+    }
 };
-
-pub fn start() !f64 {
-    wasm_timer.start_time = std.os.emscripten.emscripten_get_now();
-}
-
-pub fn lap() f64 {
-    const now = std.os.emscripten.emscripten_get_now();
-    const res = now - wasm_timer.start_time;
-    wasm_timer.start_time += now;
-    return res;
-}
