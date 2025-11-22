@@ -25,7 +25,7 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    const rom = try read_file_from_path(allocator, args[1]);
+    const rom = try read_file(allocator, args[1]);
     defer allocator.free(rom);
 
     var cpu = try CHIP8.init(rom, allocator);
@@ -50,16 +50,14 @@ pub fn help(w: *std.Io.Writer) !void {
     );
 }
 
-// TODO: improve
-pub fn read_file_from_path(allocator: mem.Allocator, path: []const u8) ![]const u8 {
+pub fn read_file(allocator: mem.Allocator, path: []const u8) ![]const u8 {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
-    const file_len = try file.getEndPos();
-    const text = try allocator.alloc(u8, file_len);
+    const file_size = (try file.stat()).size;
 
-    var buffer: [4096]u8 = undefined;
-    var reader: std.fs.File.Reader = .init(file, &buffer);
-    _ = try reader.interface.readSliceShort(text);
-    return text;
+    var reader = file.reader(&.{});
+    const source = try reader.interface.readAlloc(allocator, file_size);
+
+    return source;
 }
